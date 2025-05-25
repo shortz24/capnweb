@@ -1,0 +1,28 @@
+{
+  "name": "@cloudflare/jsrpc",
+  "version": "0.0.1",
+  "description": "JavaScript/TypeScript-native RPC library with Promise Pipelining",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "Kenton Varda <kenton@cloudflare.com>",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}
