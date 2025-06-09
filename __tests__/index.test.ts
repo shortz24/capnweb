@@ -45,6 +45,13 @@ describe("simple serialization", () => {
       new TypeError("cannot serialize: NotSerializable(123)")
     );
   })
+
+  // TODO:
+  // - Test serialization depth limits and circular reference detection
+  // - Test serialization of complex nested structures
+  // - Test serialization of Error subclasses (TypeError, RangeError, etc.)
+  // - Test deserialization error handling for malformed data
+  // - Test array escaping edge cases (nested escaped arrays)
 });
 
 // =======================================================================================
@@ -182,6 +189,34 @@ describe("local stub", () => {
     let stub = new RpcStub({abc: "hello"});
     expect(await stub.abc).toBe("hello");
   });
+
+  // TODO:
+  // - Test RpcStub wrapping an object that contains nested stubs.
+  // - Test RpcStub wrapping an object that contains nested RpcTargets.
+  // - Test RpcStub wrapping an RpcTarget that contains nested stubs.
+  // - Test RpcStub wrapping an RpcTarget that contains nested RpcTargets.
+  // - Test accessing non-existent properties of an object, array, and RpcTarget.
+  // - Test that for RpcTarget, only prototype propreties, not instance properties, are accessible.
+  // - Test that private methods (starting with #) are not accessible.
+  // - Test that the special method `constructor` is not accessible.
+  // - Test that special properties of all objects, such as `__proto__`, are not accessible.
+  //   This may require adding a hack to the test transport to string-replace some magic string
+  //   with `__proto__`, because trying to access `__proto__` on the stub will return the prototype
+  //   of the stub itself, without performing any RPC.
+});
+
+describe("stub disposal", () => {
+  // TODO:
+  // - Test disposal of an RpcStub wrapping an object with nested stubs and RpcTargets -- all
+  //   nested stubs and RpcTargets should have their disposers called.
+  // - Test disposal of an RpcStub wrapping an RpcTarget with nested stubs. Only the RpcTarget's
+  //   disposer is called.
+  // - Test dup()ing a stub wrapping an RpcTarget. The target is only disposed when all dups are
+  //   disposed.
+  // - Test that dup()ing a stub and then calling dispose on the duplicate twice does not dispose
+  //   the target -- only when the original is also disposed. (This tests that the disposer is not
+  //   simply decrementing the refcount each time it is called; disposal of any particular stub
+  //   is idempotent.)
 });
 
 describe("basic rpc", () => {
@@ -195,6 +230,11 @@ describe("basic rpc", () => {
     let stub = harness.stub;
     await expect(() => stub.throwError()).rejects.toThrow(new RangeError("test error"));
   });
+
+  // TOOD:
+  // - Test that try/catch/finally all work on promises returned by RPC.
+  // - Test trying to send a non-serializable argument.
+  // - Test trying to return a non-serializable result.
 });
 
 describe("capability-passing", () => {
@@ -214,6 +254,10 @@ describe("capability-passing", () => {
     expect(await stub.incrementCounter(counter.dup())).toBe(5);
     expect(await stub.incrementCounter(counter, 4)).toBe(9);
   });
+
+  // TODO:
+  // - Test passing a capability across two connections (three-party scenario), using two
+  //   TestHarnesses.
 });
 
 describe("promise pipelining", () => {
@@ -239,4 +283,36 @@ describe("promise pipelining", () => {
     let stub = harness.stub;
     expect(withoutDisposer(await stub.callSquare(stub.dup(), 3))).toStrictEqual({result: 9});
   });
+
+  // TODO:
+  // - Test that errors propagate to pipelined calls and property access.
+});
+
+describe("stub disposal over RPC", () => {
+  // TODO:
+  // - Test that disposing a stub that points across an RPC connection disposes the remote
+  //   RpcTarget.
+  // - Test dup()ing a stub pointing over an RPC connection. The target is only disposed when all
+  //   duplicates are disposed.
+  // - Test that dup()ing a stub poniting over RPC and then calling dispose on the duplicate twice
+  //   does not dispose the target -- only when the original is also disposed.
+  // - Test that targets are disposed automatically on disconnect. May require injecting an error
+  //   into the transport, causing receive() to reject. Also check that in-flight calls at the
+  //   time of disconnect propagate the disconnect exception (may require making a call that
+  //   hangs before the disconnect), and that further calls on the outgoing stubs immediately
+  //   reject as well.
+});
+
+describe("e-order", () => {
+  // TODO:
+  // - Test that multiple calls made concurrently on a single stub arrive in the order they were
+  //   made (e-order).
+  // - Test that multiple promise-pipelined calls made concurrently arrive in the order they were
+  //   made, even if the calls are on different properties of the same promise.
+  // - Test embargoes: If a call is made on a promise, and then that promise resolves to a local
+  //   object, and then another call is made, the second call cannot "beat" the first call. This
+  //   may require carefully controlling the timing of messages sent across the transport, perhaps
+  //   by having the first call contain a magic stringc that, when seen reflected back to the
+  //   client, causes the transport to pause delivery temporarily, until the test tells it to
+  //   proceed.
 });
