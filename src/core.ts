@@ -259,7 +259,12 @@ export class RpcStub {
       // (usually an RpcTarget). (Note we override the types as seen by the app, which is why
       // the app can pass something that isn't a StubHook -- within the implementation, though,
       // we always pass StubHook.)
-      hook = new PayloadStubHook(RpcPayload.fromApp(hook));
+      let value = <any>hook;
+      if (value instanceof RpcTarget || value instanceof Function) {
+        hook = TargetStubHook.create(value, undefined);
+      } else {
+        hook = new PayloadStubHook(RpcPayload.fromApp(value));
+      }
 
       // Don't let app set this.
       if (pathIfPromise) {
