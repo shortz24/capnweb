@@ -65,7 +65,7 @@ describe("simple serialization", () => {
             array: [1, 2, { nested: "deep" }],
             date: new Date(5678),
             null_val: null
-            // Note: undefined values are not serializable, so removed undefined_val
+            // BUG: `undefined` isn't serialized properly
           }
         }
       },
