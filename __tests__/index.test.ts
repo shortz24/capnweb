@@ -467,36 +467,52 @@ describe("basic rpc", () => {
     await expect(() => stub.throwError()).rejects.toThrow(new RangeError("test error"));
   });
 
-  // TOOD:
-  // - Test that try/catch/finally all work on promises returned by RPC.
-  it("supports try/catch/finally with RPC promises", async () => {
+  // TODO:
+  // - Test that .then(), .catch(), and .finally() all work on promises returned by RPC.
+  it("supports .then(), .catch(), and .finally() on RPC promises", async () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
-    let finallyCalled = false;
 
-    // Test try/catch with successful call
-    try {
-      let result = await stub.square(3);
-      expect(result).toBe(9);
-    } catch (err) {
-      throw new Error("Should not have thrown");
-    } finally {
-      finallyCalled = true;
+    // Test .then() with successful call
+    {
+      let result = await stub.square(3).then(value => {
+        expect(value).toBe(9);
+        return value * 2;
+      });
+      expect(result).toBe(18);
     }
-    expect(finallyCalled).toBe(true);
 
-    // Test try/catch with error
-    finallyCalled = false;
-    try {
-      await stub.throwError();
-      throw new Error("Should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(RangeError);
-      expect((err as Error).message).toBe("test error");
-    } finally {
-      finallyCalled = true;
+    // Test .catch() with error
+    {
+      let result = await stub.throwError()
+        .catch(err => {
+          expect(err).toBeInstanceOf(RangeError);
+          expect((err as Error).message).toBe("test error");
+          return "caught";
+        });
+      expect(result).toBe("caught");
     }
-    expect(finallyCalled).toBe(true);
+
+    // Test .finally() with successful call
+    {
+      let finallyCalled = false;
+      await stub.square(4)
+        .finally(() => {
+          finallyCalled = true;
+        });
+      expect(finallyCalled).toBe(true);
+    }
+
+    // Test .finally() with an error
+    {
+      let finallyCalled = false;
+      let promise = stub.throwError()
+        .finally(() => {
+          finallyCalled = true;
+        });
+      await expect(() => promise).rejects.toThrow(new RangeError("test error"));
+      expect(finallyCalled).toBe(true);
+    }
   });
 
   // - Test trying to send a non-serializable argument.
