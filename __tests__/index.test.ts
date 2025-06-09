@@ -120,6 +120,7 @@ class TestTransport implements RpcTransport {
 
   private queue: string[] = [];
   private waiter?: () => void;
+  private aborter?: (err: any) => void;
   public log = false;
 
   async send(message: string): Promise<void> {
@@ -132,15 +133,23 @@ class TestTransport implements RpcTransport {
     if (this.partner!.waiter) {
       this.partner!.waiter();
       this.partner!.waiter = undefined;
+      this.partner!.aborter = undefined;
     }
   }
 
   async receive(): Promise<string> {
     if (this.queue.length == 0) {
-      await new Promise<void>(resolve => { this.waiter = resolve; });
+      await new Promise<void>((resolve, reject) => {
+        this.waiter = resolve;
+        this.aborter = reject;
+      });
     }
 
     return this.queue.shift()!;
+  }
+
+  forceReceiveError(error: any) {
+    this.aborter!(error);
   }
 }
 
@@ -792,48 +801,36 @@ describe("stub disposal over RPC", () => {
   //   hangs before the disconnect), and that further calls on the outgoing stubs immediately
   //   reject as well.
   it("disposes targets automatically on disconnect", async () => {
-    // TODO: This test times out and needs investigation. The disconnect simulation
-    // approach may not be working correctly with the test transport implementation.
-    // This test should verify that when the RPC connection is lost, all outstanding
-    // calls are rejected and remote targets are disposed automatically.
-
-    /*
     let targetDisposed = false;
     class DisposableTarget extends RpcTarget {
       getValue() { return 42; }
-      hangingCall() {
+      hangingCall(): Promise<number> {
         // This call will hang and be interrupted by disconnect
         return new Promise(() => {}); // Never resolves
       }
       [Symbol.dispose]() { targetDisposed = true; }
     }
 
-    let clientTransport = new TestTransport("client");
-    let serverTransport = new TestTransport("server", clientTransport);
-
-    let client = new RpcSession<DisposableTarget>(clientTransport);
-    let server = new RpcSession<undefined>(serverTransport, new DisposableTarget());
-
-    let stub = client.getRemoteMain();
+    // Intentionally dont use `using` here because we expect the stats to be wrong after a
+    // disconnect.
+    let harness = new TestHarness(new DisposableTarget());
+    let stub = harness.stub;
     expect(await stub.getValue()).toBe(42);
 
     // Start a hanging call
     let hangingPromise = stub.hangingCall();
 
     // Simulate disconnect by making the transport fail
-    (clientTransport as any).receive = () => Promise.reject(new Error("connection lost"));
-    (serverTransport as any).receive = () => Promise.reject(new Error("connection lost"));
+    harness.clientTransport.forceReceiveError(new Error("test error"));
 
     // The hanging call should be rejected
-    await expect(() => hangingPromise).rejects.toThrow("connection lost");
+    await expect(() => hangingPromise).rejects.toThrow(new Error("test error"));
 
     // Further calls should also fail immediately
-    await expect(() => stub.getValue()).rejects.toThrow();
+    await expect(() => stub.getValue()).rejects.toThrow(new Error("test error"));
 
     // Targets should be disposed
-    await pumpMicrotasks();
     expect(targetDisposed).toBe(true);
-    */
   });
 });
 

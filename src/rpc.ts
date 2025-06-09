@@ -448,11 +448,13 @@ class RpcSessionImpl implements Importer, Exporter {
       }
     }
 
-    for (let entry of this.imports) {
-      entry.abort(error);
+    // WATCH OUT: this.imports and this.exports are sparse arrays. `for/let/of` will iterate
+    // only positive indexes including deleted indexes -- bad. We need to use `for/let/in` instead.
+    for (let i in this.imports) {
+      this.imports[i].abort(error);
     }
-    for (let entry of this.exports) {
-      entry.hook.dispose();
+    for (let i in this.exports) {
+      this.exports[i].hook.dispose();
     }
   }
 
