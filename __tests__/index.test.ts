@@ -529,8 +529,8 @@ describe("basic rpc", () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
 
-    await expect(() => stub.square(new NotSerializable(123) as any)).rejects.toThrow(
-      "cannot serialize: NotSerializable(123)"
+    expect(() => stub.square(new NotSerializable(123) as any)).toThrow(
+      new TypeError("cannot serialize: NotSerializable(123)")
     );
   });
 
@@ -546,7 +546,7 @@ describe("basic rpc", () => {
     let stub = harness.stub as any;
 
     await expect(() => stub.returnNonSerializable()).rejects.toThrow(
-      "cannot serialize: NotSerializable(456)"
+      new TypeError("cannot serialize: NotSerializable(456)")
     );
   });
 });
