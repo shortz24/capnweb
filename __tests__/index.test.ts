@@ -176,6 +176,13 @@ function withoutDisposer(obj: any) {
   return obj;
 }
 
+// Spin the microtask queue a bit to give messages time to be delivered and handled.
+async function pumpMicrotasks() {
+  for (let i = 0; i < 16; i++) {
+    await Promise.resolve();
+  }
+}
+
 class TestHarness<T extends RpcTarget> {
   client: RpcSession<T>;
   server: RpcSession;
@@ -204,9 +211,7 @@ class TestHarness<T extends RpcTarget> {
     try {
       // HACK: Spin the microtask loop for a bit to make sure dispose messages have been sent
       //   and received.
-      for (let i = 0; i < 16; i++) {
-        await Promise.resolve();
-      }
+      await pumpMicrotasks();
 
       // Check at the end of every test that everything was disposed.
       this.checkAllDisposed();
@@ -662,8 +667,7 @@ describe("stub disposal over RPC", () => {
     } // disposer runs here
 
     // Wait a bit for the disposal message to be processed
-    await Promise.resolve();
-    await Promise.resolve();
+    await pumpMicrotasks();
 
     expect(targetDisposed).toBe(true);
   });
@@ -691,15 +695,15 @@ describe("stub disposal over RPC", () => {
     let dup2 = disposableStub.dup();
 
     disposableStub[Symbol.dispose]();
-    await Promise.resolve();
+    await pumpMicrotasks();
     expect(targetDisposed).toBe(false);
 
     dup1[Symbol.dispose]();
-    await Promise.resolve();
+    await pumpMicrotasks();
     expect(targetDisposed).toBe(false);
 
     dup2[Symbol.dispose]();
-    await Promise.resolve();
+    await pumpMicrotasks();
     expect(targetDisposed).toBe(true);
   });
 
@@ -727,12 +731,12 @@ describe("stub disposal over RPC", () => {
     // Dispose the duplicate twice
     dup1[Symbol.dispose]();
     dup1[Symbol.dispose]();
-    await Promise.resolve();
+    await pumpMicrotasks();
     expect(targetDisposed).toBe(false);
 
     // Only when original is also disposed should the target be disposed
     disposableStub[Symbol.dispose]();
-    await Promise.resolve();
+    await pumpMicrotasks();
     expect(targetDisposed).toBe(true);
   });
 
@@ -781,7 +785,7 @@ describe("stub disposal over RPC", () => {
     await expect(() => stub.getValue()).rejects.toThrow();
 
     // Targets should be disposed
-    await Promise.resolve();
+    await pumpMicrotasks();
     expect(targetDisposed).toBe(true);
     */
   });
