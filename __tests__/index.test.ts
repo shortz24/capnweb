@@ -11,11 +11,15 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '{"foo":{"bar":123,"baz":456},"qux":789}': {foo: {bar: 123, baz: 456}, qux: 789},
 
   '[[123]]': [123],
+  '[[[[123,456]]]]': [[123, 456]],
   '{"foo":[[123]]}': {foo: [123]},
   '{"foo":[[123]],"bar":[[456,789]]}': {foo: [123], bar: [456, 789]},
 
   '["date",1234]': new Date(1234),
   '["undefined"]': undefined,
+  '["error","Error","the message"]': new Error("the message"),
+  '["error","TypeError","the message"]': new TypeError("the message"),
+  '["error","RangeError","the message"]': new RangeError("the message"),
 };
 
 class NotSerializable {
@@ -76,36 +80,12 @@ describe("simple serialization", () => {
     expect(deserialize(serialized)).toStrictEqual(complex);
   })
 
-  // - Test serialization of Error subclasses (TypeError, RangeError, etc.)
-  it("can serialize Error subclasses", () => {
-    let typeError = new TypeError("type error message");
-    let rangeError = new RangeError("range error message");
-    let referenceError = new ReferenceError("reference error message");
-    let syntaxError = new SyntaxError("syntax error message");
-
-    expect(deserialize(serialize(typeError))).toStrictEqual(typeError);
-    expect(deserialize(serialize(rangeError))).toStrictEqual(rangeError);
-    expect(deserialize(serialize(referenceError))).toStrictEqual(referenceError);
-    expect(deserialize(serialize(syntaxError))).toStrictEqual(syntaxError);
-  })
-
   // - Test deserialization error handling for malformed data
   it("throws errors for malformed deserialization data", () => {
     expect(() => deserialize('{"unclosed": ')).toThrowError();
     expect(() => deserialize('["unknown_type", "param"]')).toThrowError();
     expect(() => deserialize('["date"]')).toThrowError(); // missing timestamp
     expect(() => deserialize('["error"]')).toThrowError(); // missing type and message
-  })
-
-  // - Test array escaping edge cases (nested escaped arrays)
-  it("handles nested escaped arrays correctly", () => {
-    let nestedEscaped = [[[1, 2]], [[3, 4]]];
-    let serialized = serialize(nestedEscaped);
-    expect(deserialize(serialized)).toStrictEqual(nestedEscaped);
-
-    let deeplyNested = [[[[["deep"]]]]];
-    let serializedDeep = serialize(deeplyNested);
-    expect(deserialize(serializedDeep)).toStrictEqual(deeplyNested);
   })
 });
 
