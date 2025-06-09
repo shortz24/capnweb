@@ -317,15 +317,16 @@ describe("local stub", () => {
     let arrayStub = new RpcStub([1, 2, 3]);
     let targetStub = new RpcStub(new TestTarget());
 
-    await expect(() => objectStub.nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
-    await expect(() => arrayStub.nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
-    await expect(() => targetStub.nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
+    await expect(() => (objectStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
+    await expect(() => (arrayStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
+    await expect(() => (targetStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
   });
 
   // - Test that for RpcTarget, only prototype propreties, not instance properties, are accessible.
   it("exposes only prototype properties for RpcTarget, not instance properties", async () => {
     class TargetWithProps extends RpcTarget {
       instanceProp = "instance";
+      dynamicProp: string;
 
       constructor() {
         super();
@@ -341,8 +342,8 @@ describe("local stub", () => {
 
     expect(await stub.prototypeProp).toBe("prototype");
     expect(await stub.prototypeMethod()).toBe("method");
-    await expect(() => stub.instanceProp).rejects.toThrow("RPC object has no property 'instanceProp'");
-    await expect(() => stub.dynamicProp).rejects.toThrow("RPC object has no property 'dynamicProp'");
+    await expect(() => (stub as any).instanceProp).rejects.toThrow("RPC object has no property 'instanceProp'");
+    await expect(() => (stub as any).dynamicProp).rejects.toThrow("RPC object has no property 'dynamicProp'");
   });
 
   // - Test that private methods (starting with #) are not accessible.
@@ -354,7 +355,7 @@ describe("local stub", () => {
 
     let stub = new RpcStub(new TargetWithPrivate());
     expect(await stub.publicMethod()).toBe("public");
-    await expect(() => stub["#privateMethod"]).rejects.toThrow("RPC object has no property '#privateMethod'");
+    await expect(() => (stub as any)["#privateMethod"]).rejects.toThrow("RPC object has no property '#privateMethod'");
   });
 
   // - Test that the special method `constructor` is not accessible.
