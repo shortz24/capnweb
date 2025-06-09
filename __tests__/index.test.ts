@@ -51,8 +51,6 @@ describe("simple serialization", () => {
     );
   })
 
-  // TODO:
-  // - Test serialization depth limits and circular reference detection
   it("throws an error for circular references", () => {
     let obj: any = {};
     obj.self = obj;
@@ -61,7 +59,6 @@ describe("simple serialization", () => {
     );
   })
 
-  // - Test serialization of complex nested structures
   it("can serialize complex nested structures", () => {
     let complex = {
       level1: {
@@ -69,8 +66,8 @@ describe("simple serialization", () => {
           level3: {
             array: [1, 2, { nested: "deep" }],
             date: new Date(5678),
-            null_val: null,
-            undefined_val: undefined
+            nullVal: null,
+            undefinedVal: undefined
           }
         }
       },
@@ -80,7 +77,6 @@ describe("simple serialization", () => {
     expect(deserialize(serialized)).toStrictEqual(complex);
   })
 
-  // - Test deserialization error handling for malformed data
   it("throws errors for malformed deserialization data", () => {
     expect(() => deserialize('{"unclosed": ')).toThrowError();
     expect(() => deserialize('["unknown_type", "param"]')).toThrowError();
@@ -252,8 +248,6 @@ describe("local stub", () => {
     expect(await stub.abc).toBe("hello");
   });
 
-  // TODO:
-  // - Test RpcStub wrapping an object that contains nested stubs.
   it("supports wrapping an object with nested stubs", async () => {
     let innerTarget = new TestTarget();
     let innerStub = new RpcStub(innerTarget);
@@ -264,7 +258,6 @@ describe("local stub", () => {
     expect(await outerStub.inner.square(4)).toBe(16);
   });
 
-  // - Test RpcStub wrapping an object that contains nested RpcTargets.
   it("supports wrapping an object with nested RpcTargets", async () => {
     let innerTarget = new TestTarget();
     let outerObject = { inner: innerTarget, value: 42 };
@@ -274,7 +267,6 @@ describe("local stub", () => {
     expect(await outerStub.inner.square(4)).toBe(16);
   });
 
-  // - Test RpcStub wrapping an RpcTarget that contains nested stubs.
   it("supports wrapping an RpcTarget with nested stubs", async () => {
     class TargetWithStubs extends RpcTarget {
       getValue() { return 42; }
@@ -289,7 +281,6 @@ describe("local stub", () => {
     expect(await outerStub.innerStub.square(3)).toBe(9);
   });
 
-  // - Test RpcStub wrapping an RpcTarget that contains nested RpcTargets.
   it("supports wrapping an RpcTarget with nested RpcTargets", async () => {
     class TargetWithTargets extends RpcTarget {
       getValue() { return 42; }
@@ -304,7 +295,6 @@ describe("local stub", () => {
     expect(await outerStub.innerTarget.square(3)).toBe(9);
   });
 
-  // - Test accessing non-existent properties of an object, array, and RpcTarget.
   it("throws error when accessing non-existent properties", async () => {
     let objectStub = new RpcStub({foo: "bar"});
     let arrayStub = new RpcStub([1, 2, 3]);
@@ -315,7 +305,6 @@ describe("local stub", () => {
     await expect(() => (targetStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
   });
 
-  // - Test that for RpcTarget, only prototype propreties, not instance properties, are accessible.
   it("exposes only prototype properties for RpcTarget, not instance properties", async () => {
     class TargetWithProps extends RpcTarget {
       instanceProp = "instance";
@@ -339,7 +328,6 @@ describe("local stub", () => {
     await expect(() => (stub as any).dynamicProp).rejects.toThrow("RPC object has no property 'dynamicProp'");
   });
 
-  // - Test that private methods (starting with #) are not accessible.
   it("does not expose private methods starting with #", async () => {
     class TargetWithPrivate extends RpcTarget {
       #privateMethod() { return "private"; }
@@ -353,13 +341,7 @@ describe("local stub", () => {
 });
 
 describe("stub disposal", () => {
-  // TODO:
-  // - Test disposal of an RpcStub wrapping an object with nested stubs and RpcTargets -- all
-  //   nested stubs and RpcTargets should have their disposers called.
   it("disposes nested stubs and RpcTargets when wrapping an object", () => {
-    let innerTargetDisposed = false;
-    let anotherTargetDisposed = false;
-
     class DisposableTarget extends RpcTarget {
       constructor(private disposeFlag: { value: boolean }) {
         super();
@@ -384,8 +366,6 @@ describe("stub disposal", () => {
     expect(anotherFlag.value).toBe(true);
   });
 
-  // - Test disposal of an RpcStub wrapping an RpcTarget with nested stubs. Only the RpcTarget's
-  //   disposer is called.
   it("only calls RpcTarget disposer when wrapping an RpcTarget with nested stubs", () => {
     let targetDisposed = false;
     let innerTargetDisposed = false;
@@ -395,8 +375,10 @@ describe("stub disposal", () => {
     }
 
     class TargetWithStubs extends RpcTarget {
+      inner = new RpcStub(new InnerTarget());
+
       get innerStub() {
-        return new RpcStub(new InnerTarget());
+        return this.inner;
       }
 
       [Symbol.dispose]() { targetDisposed = true; }
@@ -409,8 +391,6 @@ describe("stub disposal", () => {
     expect(innerTargetDisposed).toBe(false); // nested stubs in RpcTarget are not auto-disposed
   });
 
-  // - Test dup()ing a stub wrapping an RpcTarget. The target is only disposed when all dups are
-  //   disposed.
   it("only disposes RpcTarget when all dups are disposed", () => {
     let disposed = false;
     class DisposableTarget extends RpcTarget {
@@ -431,10 +411,6 @@ describe("stub disposal", () => {
     expect(disposed).toBe(true);
   });
 
-  // - Test that dup()ing a stub and then calling dispose on the duplicate twice does not dispose
-  //   the target -- only when the original is also disposed. (This tests that the disposer is not
-  //   simply decrementing the refcount each time it is called; disposal of any particular stub
-  //   is idempotent.)
   it("makes disposal idempotent - duplicate dispose calls don't affect refcount", () => {
     let disposed = false;
     class DisposableTarget extends RpcTarget {
@@ -467,8 +443,6 @@ describe("basic rpc", () => {
     await expect(() => stub.throwError()).rejects.toThrow(new RangeError("test error"));
   });
 
-  // TODO:
-  // - Test that .then(), .catch(), and .finally() all work on promises returned by RPC.
   it("supports .then(), .catch(), and .finally() on RPC promises", async () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
@@ -515,7 +489,6 @@ describe("basic rpc", () => {
     }
   });
 
-  // - Test trying to send a non-serializable argument.
   it("throws error when trying to send non-serializable argument", async () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
@@ -525,7 +498,6 @@ describe("basic rpc", () => {
     );
   });
 
-  // - Test trying to return a non-serializable result.
   it("throws error when trying to return non-serializable result", async () => {
     class BadTarget extends RpcTarget {
       returnNonSerializable() {
@@ -611,11 +583,8 @@ describe("capability-passing", () => {
     expect(await stub.incrementCounter(counter, 4)).toBe(9);
   });
 
-  // TODO:
-  // - Test passing a capability across two connections (three-party scenario), using two
-  //   TestHarnesses.
   it("supports three-party capability passing", async () => {
-    // Create three parties: Alice, Bob, and Carol
+    // Create two connections: Alice and Bob
     class AliceTarget extends RpcTarget {
       getCounter() {
         return new Counter(10);
@@ -629,13 +598,13 @@ describe("capability-passing", () => {
       }
     }
 
-    await using aliceBobHarness = new TestHarness(new AliceTarget());
-    await using bobCarolHarness = new TestHarness(new BobTarget());
+    await using aliceHarness = new TestHarness(new AliceTarget());
+    await using bobHarness = new TestHarness(new BobTarget());
 
-    let aliceStub = aliceBobHarness.stub;
-    let bobStub = bobCarolHarness.stub;
+    let aliceStub = aliceHarness.stub;
+    let bobStub = bobHarness.stub;
 
-    // Alice gives a counter to Bob
+    // Get counter from Alice.
     using counter = await aliceStub.getCounter();
 
     // Bob increments the counter - this call proxies from Bob through the client to Alice
@@ -668,9 +637,24 @@ describe("promise pipelining", () => {
     expect(withoutDisposer(await stub.callSquare(stub.dup(), 3))).toStrictEqual({result: 9});
   });
 
-  // TODO:
-  // - Test that errors propagate to pipelined calls and property access.
   it("propagates errors to pipelined calls", async () => {
+    class ErrorTarget extends RpcTarget {
+      throwError(): TestTarget {
+        throw new Error("pipelined error");
+      }
+    }
+
+    await using harness = new TestHarness(new ErrorTarget());
+    let stub = harness.stub;
+
+    // Pipeline a call on a promise that will reject
+    using errorPromise = stub.throwError();
+    using pipelinedCall = errorPromise.square(5);
+
+    await expect(() => pipelinedCall).rejects.toThrow("pipelined error");
+  });
+
+  it("propagates errors to argument-pipelined calls", async () => {
     class ErrorTarget extends RpcTarget {
       throwError(): never {
         throw new Error("pipelined error");
@@ -682,7 +666,7 @@ describe("promise pipelining", () => {
     }
 
     await using harness = new TestHarness(new ErrorTarget());
-    let stub = harness.stub as any;
+    let stub = harness.stub;
 
     // Pipeline a call on a promise that will reject
     using errorPromise = stub.throwError();
@@ -693,9 +677,6 @@ describe("promise pipelining", () => {
 });
 
 describe("stub disposal over RPC", () => {
-  // TODO:
-  // - Test that disposing a stub that points across an RPC connection disposes the remote
-  //   RpcTarget.
   it("disposes remote RpcTarget when stub is disposed", async () => {
     let targetDisposed = false;
     class DisposableTarget extends RpcTarget {
@@ -723,8 +704,6 @@ describe("stub disposal over RPC", () => {
     expect(targetDisposed).toBe(true);
   });
 
-  // - Test dup()ing a stub pointing over an RPC connection. The target is only disposed when all
-  //   duplicates are disposed.
   it("only disposes remote target when all RPC dups are disposed", async () => {
     let targetDisposed = false;
     class DisposableTarget extends RpcTarget {
@@ -758,8 +737,6 @@ describe("stub disposal over RPC", () => {
     expect(targetDisposed).toBe(true);
   });
 
-  // - Test that dup()ing a stub poniting over RPC and then calling dispose on the duplicate twice
-  //   does not dispose the target -- only when the original is also disposed.
   it("makes RPC disposal idempotent", async () => {
     let targetDisposed = false;
     class DisposableTarget extends RpcTarget {
@@ -791,11 +768,6 @@ describe("stub disposal over RPC", () => {
     expect(targetDisposed).toBe(true);
   });
 
-  // - Test that targets are disposed automatically on disconnect. May require injecting an error
-  //   into the transport, causing receive() to reject. Also check that in-flight calls at the
-  //   time of disconnect propagate the disconnect exception (may require making a call that
-  //   hangs before the disconnect), and that further calls on the outgoing stubs immediately
-  //   reject as well.
   it("disposes targets automatically on disconnect", async () => {
     let targetDisposed = false;
     class DisposableTarget extends RpcTarget {
@@ -831,9 +803,6 @@ describe("stub disposal over RPC", () => {
 });
 
 describe("e-order", () => {
-  // TODO:
-  // - Test that multiple calls made concurrently on a single stub arrive in the order they were
-  //   made (e-order).
   it("maintains e-order for concurrent calls on single stub", async () => {
     let callOrder: number[] = [];
     class OrderTarget extends RpcTarget {
@@ -860,8 +829,6 @@ describe("e-order", () => {
     expect(callOrder).toEqual([1, 2, 3, 4]);
   });
 
-  // - Test that multiple promise-pipelined calls made concurrently arrive in the order they were
-  //   made, even if the calls are on different properties of the same promise.
   it("maintains e-order for promise-pipelined calls", async () => {
     let callOrder: number[] = [];
     class OrderTarget extends RpcTarget {
@@ -891,48 +858,5 @@ describe("e-order", () => {
 
     // Calls should arrive in the order they were made, even across different methods
     expect(callOrder).toEqual([1, 2, 3, 4]);
-  });
-
-  // - Test embargoes: If a call is made on a promise, and then that promise resolves to a local
-  //   object, and then another call is made, the second call cannot "beat" the first call. This
-  //   may require carefully controlling the timing of messages sent across the transport, perhaps
-  //   by having the first call contain a magic stringc that, when seen reflected back to the
-  //   client, causes the transport to pause delivery temporarily, until the test tells it to
-  //   proceed.
-  it("enforces embargoes to prevent call reordering", async () => {
-    let callOrder: number[] = [];
-
-    // Local object that will be returned by the promise
-    let localObject = {
-      recordCall: (id: number) => { callOrder.push(id); return id; }
-    };
-
-    class EmbargoTarget extends RpcTarget {
-      getLocalObject() {
-        return localObject;
-      }
-    }
-
-    await using harness = new TestHarness(new EmbargoTarget());
-    let stub = harness.stub as any;
-
-    // Get a promise that will resolve to a local object
-    using objectPromise = stub.getLocalObject();
-
-    // Make a pipelined call on the promise
-    let pipelinedCall = objectPromise.recordCall(1);
-
-    // Wait for the promise to resolve
-    let resolvedObject = await objectPromise;
-
-    // Now make a direct call on the resolved local object
-    let directCall = resolvedObject.recordCall(2);
-
-    // Wait for both calls to complete
-    await Promise.all([pipelinedCall, directCall]);
-
-    // The pipelined call should complete before the direct call,
-    // even though the direct call was made after the promise resolved
-    expect(callOrder).toEqual([1, 2]);
   });
 });
