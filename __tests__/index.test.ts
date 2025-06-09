@@ -119,9 +119,10 @@ class TestTransport implements RpcTransport {
 
   private queue: string[] = [];
   private waiter?: () => void;
+  public log = false;
 
   async send(message: string): Promise<void> {
-    console.log(`${this.name}: ${message}`);
+    if (this.log) console.log(`${this.name}: ${message}`);
     this.partner!.queue.push(message);
     if (this.partner!.waiter) {
       this.partner!.waiter();
@@ -184,22 +185,30 @@ async function pumpMicrotasks() {
 }
 
 class TestHarness<T extends RpcTarget> {
+  clientTransport: TestTransport;
+  serverTransport: TestTransport;
   client: RpcSession<T>;
   server: RpcSession;
 
   stub: RpcStub<T>;
 
   constructor(target: T) {
-    let clientTransport = new TestTransport("client");
-    let serverTransport = new TestTransport("server", clientTransport);
+    this.clientTransport = new TestTransport("client");
+    this.serverTransport = new TestTransport("server", this.clientTransport);
 
-    this.client = new RpcSession<T>(clientTransport);
+    this.client = new RpcSession<T>(this.clientTransport);
 
     // TODO: If I remove `<undefined>` here, I get a TypeScript error about the instantiation being
     //   excessively deep and possibly infinite. Why? `<undefined>` is supposed to be the default.
-    this.server = new RpcSession<undefined>(serverTransport, target);
+    this.server = new RpcSession<undefined>(this.serverTransport, target);
 
     this.stub = this.client.getRemoteMain();
+  }
+
+  // Enable logging of all messages sent. Useful for debugging.
+  enableLogging() {
+    this.clientTransport.log = true;
+    this.serverTransport.log = true;
   }
 
   checkAllDisposed() {
