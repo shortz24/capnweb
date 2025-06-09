@@ -15,6 +15,7 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '{"foo":[[123]],"bar":[[456,789]]}': {foo: [123], bar: [456, 789]},
 
   '["date",1234]': new Date(1234),
+  '["undefined"]': undefined,
 };
 
 class NotSerializable {
@@ -64,8 +65,8 @@ describe("simple serialization", () => {
           level3: {
             array: [1, 2, { nested: "deep" }],
             date: new Date(5678),
-            null_val: null
-            // BUG: `undefined` isn't serialized properly
+            null_val: null,
+            undefined_val: undefined
           }
         }
       },

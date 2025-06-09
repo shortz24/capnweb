@@ -133,6 +133,9 @@ export class Devaluator {
         return ["error", e.name, e.message];
       }
 
+      case "undefined":
+        return ["undefined"];
+
       case "stub":
       case "rpc-promise": {
         if (!this.source) {
@@ -279,6 +282,11 @@ export class Evaluator {
           if (value.length >= 3 && typeof value[1] === "string" && typeof value[2] === "string") {
             let cls = ERROR_TYPES[value[1]] || Error;
             return new cls(value[2]);
+          }
+          break;
+        case "undefined":
+          if (value.length === 1) {
+            return undefined;
           }
           break;
 

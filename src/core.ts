@@ -9,7 +9,7 @@ export abstract class RpcTarget implements RpcTargetBranded {}
 export type PropertyPath = (string | number)[];
 
 type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
-    "stub" | "rpc-promise" | "rpc-target" | "error";
+    "stub" | "rpc-promise" | "rpc-target" | "error" | "undefined";
 
 export function typeForRpc(value: unknown): TypeForRpc {
   switch (typeof value) {
@@ -17,6 +17,9 @@ export function typeForRpc(value: unknown): TypeForRpc {
     case "number":
     case "string":
       return "primitive";
+
+    case "undefined":
+      return "undefined";
 
     case "object":
     case "function":
@@ -507,6 +510,7 @@ export class RpcPayload {
       case "primitive":
       case "date":
       case "error":
+      case "undefined":
         // immutable, no need to copy
         // TODO: Should errors be copied if they have own properties?
         return value;
@@ -716,6 +720,7 @@ export class RpcPayload {
       case "primitive":
       case "date":
       case "error":
+      case "undefined":
         return;
 
       case "array": {
@@ -834,6 +839,7 @@ function followPath(value: unknown, parent: object | undefined,
       case "primitive":
       case "date":
       case "error":
+      case "undefined":
         // These have no properties that can be accessed remotely.
         throwPathError(path, i);
 
