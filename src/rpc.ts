@@ -196,7 +196,11 @@ class RpcSessionImpl implements Importer, Exporter {
     // Import zero is the other side's bootstrap object.
     this.imports.push(new ImportTableEntry(this, 0, false));
 
-    this.readLoop().catch(err => this.abort(err));
+    let rejectFunc: (error: any) => void;;
+    let abortPromise = new Promise<never>((resolve, reject) => { rejectFunc = reject; });
+    this.cancelReadLoop = rejectFunc!;
+
+    this.readLoop(abortPromise).catch(err => this.abort(err));
   }
 
   // Should only be called once immediately after construction.
@@ -452,8 +456,7 @@ class RpcSessionImpl implements Importer, Exporter {
     }
   }
 
-  private async readLoop() {
-    let abortPromise = new Promise<never>((resolve, reject) => { this.cancelReadLoop = reject; });
+  private async readLoop(abortPromise: Promise<never>) {
     while (!this.abortReason) {
       let msg = JSON.parse(await Promise.race([this.transport.receive(), abortPromise]));
       if (this.abortReason) break;  // check again before processing
