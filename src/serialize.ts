@@ -150,11 +150,6 @@ export class Devaluator {
         }
 
         let hook = this.source.getHookForRpcTarget(<RpcTarget|Function>value, parent);
-        if (!this.takeOwnership) {
-          // We're not supposed to take ownership of stubs we see, so we have to dup them instead.
-          hook = hook.dup();
-        }
-
         return this.devaluateHook(hook, undefined);
       }
 
