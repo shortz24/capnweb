@@ -804,6 +804,10 @@ function followPath(value: unknown, parent: object | undefined,
     parent = <object>value;
 
     let part = path[i];
+    if (part === "__proto__" || part === "constructor") {
+      throwPathError(path, i);
+    }
+
     let kind = typeForRpc(value);
     switch (kind) {
       case "object":

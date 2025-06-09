@@ -123,6 +123,10 @@ class TestTransport implements RpcTransport {
   public log = false;
 
   async send(message: string): Promise<void> {
+    // HACK: If the string "$remove$" appears in the message, remove it. This is used in some
+    //   tests to hack the RPC protocol.
+    message = message.replaceAll("$remove$", "");
+
     if (this.log) console.log(`${this.name}: ${message}`);
     this.partner!.queue.push(message);
     if (this.partner!.waiter) {
@@ -357,26 +361,6 @@ describe("local stub", () => {
     expect(await stub.publicMethod()).toBe("public");
     await expect(() => (stub as any)["#privateMethod"]).rejects.toThrow("RPC object has no property '#privateMethod'");
   });
-
-  // - Test that the special method `constructor` is not accessible.
-  it("does not expose the constructor method", async () => {
-    // BUG: This test fails!
-    let stub = new RpcStub(new TestTarget());
-    // expect(await stub.constructor).toBeUndefined();
-  });
-
-  // - Test that special properties of all objects, such as `__proto__`, are not accessible.
-  //   This may require adding a hack to the test transport to string-replace some magic string
-  //   with `__proto__`, because trying to access `__proto__` on the stub will return the prototype
-  //   of the stub itself, without performing any RPC.
-  it("does not expose special properties like __proto__", async () => {
-    // TODO: This test is problematic because properties like toString, valueOf, hasOwnProperty,
-    // and __proto__ end up accessing the property on the local stub, not the remote end.
-    // That is OK, but it's important that the property on the remote object is not accessible
-    // even by an attacker that crafts malicious messages. We need a different approach to test
-    // this security property properly.
-    let stub = new RpcStub(new TestTarget());
-  });
 });
 
 describe("stub disposal", () => {
@@ -550,6 +534,57 @@ describe("basic rpc", () => {
     await expect(() => stub.returnNonSerializable()).rejects.toThrow(
       new TypeError("cannot serialize: NotSerializable(456)")
     );
+  });
+
+  it("does not expose common Object properties on RpcTarget", async () => {
+    await using harness = new TestHarness(new TestTarget());
+    let stub: any = harness.stub;
+
+    // For this test we want to access properties on a remove object that are common properties of
+    // all objects. However, if we just access them on the stub, we'll actually access the *local*
+    // object's version of that property. We really want to generate messages sent to the other
+    // end to access the remote version, but there's no legitimate way to do this via the JS-level
+    // API. Fortunately, our transport implements a hack: the string "$remove$" will be excised
+    // from any message. So, we can use this as a prefix on property names to create a prpoperty
+    // that does not match anything locally, but by the time it reaches the remote end, will name
+    // a common object property.
+
+    // Properties of Object.prototype should not be exposed over RPC.
+    await expect(() => stub.$remove$toString).rejects.toThrow("RPC object has no property 'toString'");
+    await expect(() => stub.$remove$hasOwnProperty).rejects.toThrow("RPC object has no property 'hasOwnProperty'");
+
+    // Special properties are not exposed.
+    await expect(() => stub.$remove$__proto__).rejects.toThrow("RPC object has no property '__proto__'");
+    await expect(() => stub.$remove$constructor).rejects.toThrow("RPC object has no property 'constructor'");
+  });
+
+  it("does not expose common Object properties on RpcTarget", async () => {
+    class ObjectVendor extends RpcTarget {
+      get() {
+        return new RpcStub<object>({foo: 123, arr: [1, 2], func(x: number) { return 123; }});
+      }
+    }
+
+    await using harness = new TestHarness(new ObjectVendor());
+    using stub: any = await harness.stub.get();
+
+    expect(await stub.foo).toBe(123);
+
+    // Similar to previous test case, but we're operating on a stub backed by an object rather
+    // than an RpcTarget now.
+
+    // Properties of Object.prototype should not be exposed over RPC.
+    await expect(() => stub.$remove$toString).rejects.toThrow("RPC object has no property 'toString'");
+    await expect(() => stub.$remove$hasOwnProperty).rejects.toThrow("RPC object has no property 'hasOwnProperty'");
+
+    // Properties of Array.prototype and Function.prototype are similarly not exposed even for
+    // values of those types.
+    await expect(() => stub.arr.$remove$map).rejects.toThrow("'arr' has no property 'map'");
+    await expect(() => stub.func.$remove$call).rejects.toThrow("RPC object has no property 'call'");
+
+    // Special properties are not exposed.
+    await expect(() => stub.$remove$__proto__).rejects.toThrow("RPC object has no property '__proto__'");
+    await expect(() => stub.$remove$constructor).rejects.toThrow("RPC object has no property 'constructor'");
   });
 });
 
