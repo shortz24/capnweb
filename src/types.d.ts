@@ -17,7 +17,7 @@ export type Stubable = RpcTargetBranded | ((...args: any[]) => any);
 // The reason for using a generic type here is to build a serializable subset of structured
 //   cloneable composite types. This allows types defined with the "interface" keyword to pass the
 //   serializable check as well. Otherwise, only types defined with the "type" keyword would pass.
-type Serializable<T> =
+export type Serializable<T> =
   // Structured cloneables
   | BaseType
   // Structured cloneable composites
@@ -79,7 +79,7 @@ type BaseType =
   | Headers;
 // Recursively rewrite all `Stubable` types with `Stub`s, and resolve promsies.
 // prettier-ignore
-type Stubify<T> =
+export type Stubify<T> =
   T extends Stubable ? Stub<T>
   : T extends Promise<T> ? Stubify<T>
   : T extends StubBase<any> ? T
