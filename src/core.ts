@@ -8,11 +8,17 @@ if (!Symbol.asyncDispose) {
   (Symbol as any).asyncDispose = Symbol.for('asyncDispose');
 }
 
-export interface RpcTarget {
-  [__RPC_TARGET_BRAND]: never;
+let workersModuleName = navigator.userAgent === "Cloudflare-Workers" ? "cloudflare:workers" : null;
+let workersModule: any;
+if (workersModuleName) {
+  workersModule = await import(/* @vite-ignore */workersModuleName);
 }
 
-export abstract class RpcTarget implements RpcTargetBranded {}
+export interface RpcTarget {
+  [__RPC_TARGET_BRAND]: never;
+};
+
+export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
 
 export type PropertyPath = (string | number)[];
 
