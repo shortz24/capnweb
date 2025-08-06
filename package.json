@@ -21,6 +21,9 @@
     "prepublishOnly": "npm run build"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.60",
+    "@vitest/browser": "^3.2.4",
+    "playwright": "^1.54.2",
     "tsup": "^8.4.0",
     "typescript": "^5.8.2",
     "vitest": "^3.0.8"

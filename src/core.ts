@@ -1,5 +1,13 @@
 import type { RpcTargetBranded, __RPC_TARGET_BRAND } from "./types.js";
 
+// Polyfill Symbol.dispose for browsers that don't support it yet
+if (!Symbol.dispose) {
+  (Symbol as any).dispose = Symbol.for('dispose');
+}
+if (!Symbol.asyncDispose) {
+  (Symbol as any).asyncDispose = Symbol.for('asyncDispose');
+}
+
 export interface RpcTarget {
   [__RPC_TARGET_BRAND]: never;
 }
