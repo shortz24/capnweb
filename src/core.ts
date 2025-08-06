@@ -77,6 +77,16 @@ export function typeForRpc(value: unknown): TypeForRpc {
     // TODO: Promise<T> or thenable
 
     default:
+      if (workersModule) {
+        // TODO: We also need to match `RpcPromise` and `RpcProperty`, but they currently aren't
+        //   exported by cloudflare:workers.
+        if (prototype == workersModule.RpcStub.prototype ||
+            prototype == workersModule.RpcPromise.prototype ||
+            prototype == workersModule.RpcProperty.prototype) {
+          return "rpc-target";
+        }
+      }
+
       if (value instanceof RpcTarget) {
         return "rpc-target";
       }
@@ -836,7 +846,10 @@ function followPath(value: unknown, parent: object | undefined,
 
       case "rpc-target": {
         // Must be prototype property, and must NOT be inherited from `Object`.
-        value = Object.getPrototypeOf(value)[part];
+        if (Object.hasOwn(<object>value, part)) {
+          throwPathError(path, i);
+        }
+        value = (<any>value)[part];
         if (!value || value === (<any>Object.prototype)[part]) {
           throwPathError(path, i);
         }
