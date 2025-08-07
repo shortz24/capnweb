@@ -277,10 +277,12 @@ const PROXY_HANDLERS: ProxyHandler<{raw: RpcStub}> = {
 // Note that the in the public API, we override the type of RpcStub to reflect the interface
 // exposed by the proxy. That happens in index.ts. But for internal purposes, it's easier to just
 // omit the type parameter.
-export class RpcStub {
+export class RpcStub extends RpcTarget {
   // Although `hook` and `path` are declared `public` here, they are effectively hidden by the
   // proxy.
   constructor(hook: StubHook, pathIfPromise?: PropertyPath) {
+    super();
+
     if (!(hook instanceof StubHook)) {
       // Application invoked the constructor to explicitly construct a stub backed by some value
       // (usually an RpcTarget). (Note we override the types as seen by the app, which is why

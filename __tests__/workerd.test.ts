@@ -33,6 +33,14 @@ class CounterFactory extends RpcTarget {
   getNativeEmbedded() {
     return {stub: new NativeRpcStub(new NativeCounter())};
   }
+
+  getJs() {
+    return new RpcStub(new JsCounter());
+  }
+
+  getJsEmbedded() {
+    return {stub: new RpcStub(new JsCounter())};
+  }
 }
 
 describe("workerd compatibility", () => {
@@ -101,6 +109,64 @@ describe("workerd compatibility", () => {
     {
       let factory = new RpcStub(new CounterFactory());
       let obj = factory.getNativeEmbedded();
+      expect(await obj.stub.increment()).toBe(1);
+      expect(await obj.stub.increment()).toBe(2);
+    }
+  })
+
+  it("can wrap a JSRPC stub in a native stub", async () => {
+    let stub = new NativeRpcStub(new RpcStub(new JsCounter()));
+    expect(await stub.increment()).toBe(1);
+    expect(await stub.increment()).toBe(2);
+  })
+
+  it("can return a JSRPC stub from a native call", async () => {
+    // Returning a bare stub.
+    {
+      let factory = new NativeRpcStub(new CounterFactory());
+      let stub = await factory.getJs();
+      expect(await stub.increment()).toBe(1);
+      expect(await stub.increment()).toBe(2);
+    }
+
+    // Again with a stub wrapped in an object.
+    {
+      let factory = new NativeRpcStub(new CounterFactory());
+      let obj = await factory.getJsEmbedded();
+      expect(await obj.stub.increment()).toBe(1);
+      expect(await obj.stub.increment()).toBe(2);
+    }
+  })
+
+  it("can wrap a JSRPC promise or property in a native stub", async () => {
+    // Wrap a JSRPC RpcPromise in a native stub.
+    {
+      let factory = new RpcStub(new CounterFactory());
+      let stub = new NativeRpcStub(factory.getJs());
+      expect(await stub.increment()).toBe(1);
+      expect(await stub.increment()).toBe(2);
+    }
+
+    // Wrap a JSRPC property (which is actually also an RpcPromise) in a native stub.
+    {
+      let factory = new RpcStub(new CounterFactory());
+      let stub = new NativeRpcStub(factory.getJsEmbedded().stub);
+      expect(await stub.increment()).toBe(1);
+      expect(await stub.increment()).toBe(2);
+    }
+  })
+
+  it("can pipeline on a JSRPC stub returned from a native call", async () => {
+    {
+      let factory = new NativeRpcStub(new CounterFactory());
+      let obj = factory.getJs();
+      expect(await obj.increment()).toBe(1);
+      expect(await obj.increment()).toBe(2);
+    }
+
+    {
+      let factory = new NativeRpcStub(new CounterFactory());
+      let obj = factory.getJsEmbedded();
       expect(await obj.stub.increment()).toBe(1);
       expect(await obj.stub.increment()).toBe(2);
     }
