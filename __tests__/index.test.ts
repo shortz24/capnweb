@@ -1,5 +1,6 @@
 import { expect, it, describe } from "vitest"
 import { deserialize, serialize, RpcSession, RpcTransport, RpcTarget, RpcStub, RpcPromise } from "../src/index.js"
+import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '123': 123,
@@ -126,39 +127,6 @@ class TestTransport implements RpcTransport {
 
   forceReceiveError(error: any) {
     this.aborter!(error);
-  }
-}
-
-class Counter extends RpcTarget {
-  constructor(private i: number = 0) {
-    super();
-  }
-
-  increment(amount: number = 1): number {
-    this.i += amount;
-    return this.i;
-  }
-}
-
-class TestTarget extends RpcTarget {
-  square(i: number) {
-    return i * i;
-  }
-
-  callSquare(self: RpcStub<TestTarget>, i: number) {
-    return { result: self.square(i) };
-  }
-
-  throwError() {
-    throw new RangeError("test error");
-  }
-
-  makeCounter(i: number) {
-    return new Counter(i);
-  }
-
-  incrementCounter(c: RpcStub<Counter>, i: number = 1) {
-    return c.increment(i);
   }
 }
 
