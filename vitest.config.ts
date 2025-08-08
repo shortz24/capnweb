@@ -44,6 +44,7 @@ export default defineConfig({
               { browser: 'chromium' },
             ],
             headless: true,
+            screenshotFailures: false,  // there's nothing to screenshot
           },
         },
       },
@@ -68,6 +69,7 @@ export default defineConfig({
               { browser: 'webkit' },
             ],
             headless: true,
+            screenshotFailures: false,  // there's nothing to screenshot
           },
         },
       },
