@@ -19,6 +19,8 @@ let server: WebSocketServer | undefined
 export async function setup(project: TestProject) {
   let ready = Promise.withResolvers<void>();
 
+  // TODO: Accept HTTP batch requests as well.
+
   server = new WebSocketServer({ port: 0 }, ready.resolve) // Use ephemeral port
 
   server.on('connection', (ws) => {

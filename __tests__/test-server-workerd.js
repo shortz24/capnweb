@@ -6,7 +6,7 @@
 // build step for it. Instead, we're getting by configuring the worker in vitest.config.ts by
 // just specifying the raw JS modules.
 
-import { newWorkersWebSocketRpcResponse } from "../dist/index.js";
+import { newWorkersRpcResponse } from "../dist/index.js";
 import { RpcTarget } from "cloudflare:workers";
 
 // TODO(cleanup): At present we clone the implementation of Counter and TestTarget because
@@ -47,6 +47,6 @@ export class TestTarget extends RpcTarget {
 
 export default {
   async fetch(req, env, ctx) {
-    return newWorkersWebSocketRpcResponse(req, new TestTarget());
+    return newWorkersRpcResponse(req, new TestTarget());
   }
 }

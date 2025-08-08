@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import { expect, it, describe } from "vitest";
 import { RpcStub as NativeRpcStub, RpcTarget as NativeRpcTarget, env } from "cloudflare:workers";
-import { newWebSocketRpcSession, RpcStub, RpcTarget } from "../src/index.js";
+import { newHttpBatchRpcSession, newWebSocketRpcSession, RpcStub, RpcTarget } from "../src/index.js";
 import { Counter, TestTarget } from "./test-util.js";
 
 class JsCounter extends RpcTarget {
@@ -178,7 +178,7 @@ interface Env {
   testServer: Fetcher
 }
 
-describe("workerd WebSocket server", () => {
+describe("workerd RPC server", () => {
   it("can accept WebSocket RPC connections", async () => {
     let resp = await (<Env>env).testServer.fetch("http://foo", {headers: {Upgrade: "websocket"}});
     let ws = resp.webSocket;
@@ -198,5 +198,18 @@ describe("workerd WebSocket server", () => {
       let counter = new Counter(4);
       expect(await cap.incrementCounter(counter, 9)).toBe(13);
     }
+  })
+
+  it("can accept HTTP batch RPC connections", async () => {
+    let cap = newHttpBatchRpcSession<TestTarget>("http://foo", {fetcher: (<Env>env).testServer});
+
+    let promise1 = cap.square(6);
+
+    let counter = cap.makeCounter(2);
+    let promise2 = counter.increment(3);
+    let promise3 = cap.incrementCounter(counter, 4);
+
+    expect(await Promise.all([promise1, promise2, promise3]))
+        .toStrictEqual([36, 5, 9]);
   })
 });

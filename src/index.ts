@@ -4,9 +4,11 @@ import { RpcTransport, RpcSession as RpcSessionImpl } from "./rpc.js";
 import { RpcTargetBranded, Serializable, Stub, Stubify, __RPC_TARGET_BRAND } from "./types.js";
 import { newWebSocketRpcSession as newWebSocketRpcSessionImpl,
          newWorkersWebSocketRpcResponse } from "./websocket.js";
+import { newHttpBatchRpcSession as newHttpBatchRpcSessionImpl,
+         newHttpBatchRpcResponse } from "./batch.js"
 
 // Re-export public API types.
-export { serialize, deserialize, newWorkersWebSocketRpcResponse };
+export { serialize, deserialize, newWorkersWebSocketRpcResponse, newHttpBatchRpcResponse };
 export type { RpcTransport };
 
 // Hack the type system to make RpcStub's types work nicely!
@@ -23,6 +25,10 @@ export const RpcPromise: {
 export interface RpcSession<T extends Serializable<T> = undefined> {
   getRemoteMain(): RpcStub<T>;
   getStats(): {imports: number, exports: number};
+
+  // Waits until the peer is not waiting on any more promise resolutions from us. This is useful
+  // in particular to decide when a batch is complete.
+  drain(): Promise<void>;
 }
 export const RpcSession: {
   new <T extends Serializable<T> = undefined>(
@@ -42,3 +48,19 @@ export let newWebSocketRpcSession:
     <T extends Serializable<T> = Empty>
     (webSocket: WebSocket | string, localMain?: any) => Stubify<T> =
     <any>newWebSocketRpcSessionImpl;
+
+export let newHttpBatchRpcSession:
+    <T extends Serializable<T> = Empty>
+    (urlOrRequest: string | Request, init?: RequestInit) => Stubify<T> =
+    <any>newHttpBatchRpcSessionImpl;
+
+// Implements inified handling of HTTP-batch and WebSocket responses for the Workers Runtime.
+export function newWorkersRpcResponse(request: Request, localMain: any) {
+  if (request.method === "POST") {
+    return newHttpBatchRpcResponse(request, localMain);
+  } else if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
+    return newWorkersWebSocketRpcResponse(request, localMain);
+  } else {
+    return new Response("This endpoint only accepts POST or WebSocket requests.", { status: 400 });
+  }
+}
