@@ -1,7 +1,8 @@
 /// <reference types="@cloudflare/workers-types" />
 import { expect, it, describe } from "vitest";
-import { RpcStub as NativeRpcStub, RpcTarget as NativeRpcTarget } from "cloudflare:workers";
-import { RpcStub, RpcTarget } from "../src/index.js";
+import { RpcStub as NativeRpcStub, RpcTarget as NativeRpcTarget, env } from "cloudflare:workers";
+import { newWebSocketRpcSession, RpcStub, RpcTarget } from "../src/index.js";
+import { Counter, TestTarget } from "./test-util.js";
 
 class JsCounter extends RpcTarget {
   constructor(private i: number = 0) {
@@ -169,6 +170,33 @@ describe("workerd compatibility", () => {
       let obj = factory.getJsEmbedded();
       expect(await obj.stub.increment()).toBe(1);
       expect(await obj.stub.increment()).toBe(2);
+    }
+  })
+});
+
+interface Env {
+  testServer: Fetcher
+}
+
+describe("workerd WebSocket server", () => {
+  it("can accept WebSocket RPC connections", async () => {
+    let resp = await (<Env>env).testServer.fetch("http://foo", {headers: {Upgrade: "websocket"}});
+    let ws = resp.webSocket;
+    expect(ws).toBeTruthy();
+
+    ws!.accept();
+    let cap = newWebSocketRpcSession<TestTarget>(ws!);
+
+    expect(await cap.square(5)).toBe(25);
+
+    {
+      let counter = cap.makeCounter(2);
+      expect(await counter.increment(3)).toBe(5);
+    }
+
+    {
+      let counter = new Counter(4);
+      expect(await cap.incrementCounter(counter, 9)).toBe(13);
     }
   })
 });
