@@ -27,5 +27,9 @@
     "tsup": "^8.4.0",
     "typescript": "^5.8.2",
     "vitest": "^3.0.8"
+  },
+  "//": "Force miniflare to use workerd 1.20250809.0 or newer since it contains necessary bugfixes",
+  "overrides": {
+    "workerd": ">=1.20250809.0"
   }
 }
