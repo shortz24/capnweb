@@ -22,10 +22,15 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.60",
+    "@cloudflare/workers-types": "^4.20250805.0",
     "@vitest/browser": "^3.2.4",
     "playwright": "^1.54.2",
     "tsup": "^8.4.0",
     "typescript": "^5.8.2",
     "vitest": "^3.0.8"
+  },
+  "//": "Force miniflare to use workerd 1.20250809.0 or newer since it contains necessary bugfixes",
+  "overrides": {
+    "workerd": ">=1.20250809.0"
   }
 }

@@ -1,10 +1,10 @@
-import { RpcTarget, RpcStub as RpcStubImpl, RpcPromise as RpcPromiseImpl } from "./core.js";
+import { RpcTarget as RpcTargetImpl, RpcStub as RpcStubImpl, RpcPromise as RpcPromiseImpl } from "./core.js";
 import { serialize, deserialize } from "./serialize.js";
 import { RpcTransport, RpcSession as RpcSessionImpl } from "./rpc.js";
-import { Serializable, Stub, Stubify } from "./types.js";
+import { RpcTargetBranded, Serializable, Stub, Stubify, __RPC_TARGET_BRAND } from "./types.js";
 
 // Re-export public API types.
-export { RpcTarget, serialize, deserialize };
+export { serialize, deserialize };
 export type { RpcTransport };
 
 // Hack the type system to make RpcStub's types work nicely!
@@ -26,3 +26,10 @@ export const RpcSession: {
   new <T extends Serializable<T> = undefined>(
       transport: RpcTransport, localMain?: any): RpcSession<T>;
 } = <any>RpcSessionImpl;
+
+// RpcTarget needs some hackage too to brand it properly and account for the implementation
+// conditionally being imported from "cloudflare:workers".
+export interface RpcTarget extends RpcTargetBranded {};
+export const RpcTarget: {
+  new(): RpcTarget;
+} = RpcTargetImpl;

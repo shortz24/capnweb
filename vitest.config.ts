@@ -10,7 +10,7 @@ export default defineConfig({
       {
         test: {
           name: 'node',
-          include: ['__tests__/**/*.test.ts'],
+          include: ['__tests__/index.test.ts'],
           environment: 'node',
         },
       },
@@ -19,7 +19,7 @@ export default defineConfig({
       {
         test: {
           name: 'workerd',
-          include: ['__tests__/**/*.test.ts'],
+          include: ['__tests__/index.test.ts', '__tests__/workerd.test.ts'],
           pool: '@cloudflare/vitest-pool-workers',
           poolOptions: {
             workers: {
@@ -35,7 +35,7 @@ export default defineConfig({
       {
         test: {
           name: 'browsers-with-using',
-          include: ['__tests__/**/*.test.ts'],
+          include: ['__tests__/index.test.ts'],
           browser: {
             enabled: true,
             provider: 'playwright',
@@ -55,7 +55,7 @@ export default defineConfig({
         },
         test: {
           name: 'browsers-without-using',
-          include: ['__tests__/**/*.test.ts'],
+          include: ['__tests__/index.test.ts'],
           browser: {
             enabled: true,
             provider: 'playwright',

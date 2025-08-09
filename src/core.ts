@@ -8,11 +8,17 @@ if (!Symbol.asyncDispose) {
   (Symbol as any).asyncDispose = Symbol.for('asyncDispose');
 }
 
-export interface RpcTarget {
-  [__RPC_TARGET_BRAND]: never;
+let workersModuleName = navigator.userAgent === "Cloudflare-Workers" ? "cloudflare:workers" : null;
+let workersModule: any;
+if (workersModuleName) {
+  workersModule = await import(/* @vite-ignore */workersModuleName);
 }
 
-export abstract class RpcTarget implements RpcTargetBranded {}
+export interface RpcTarget {
+  [__RPC_TARGET_BRAND]: never;
+};
+
+export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
 
 export type PropertyPath = (string | number)[];
 
@@ -71,6 +77,16 @@ export function typeForRpc(value: unknown): TypeForRpc {
     // TODO: Promise<T> or thenable
 
     default:
+      if (workersModule) {
+        // TODO: We also need to match `RpcPromise` and `RpcProperty`, but they currently aren't
+        //   exported by cloudflare:workers.
+        if (prototype == workersModule.RpcStub.prototype ||
+            prototype == workersModule.RpcPromise.prototype ||
+            prototype == workersModule.RpcProperty.prototype) {
+          return "rpc-target";
+        }
+      }
+
       if (value instanceof RpcTarget) {
         return "rpc-target";
       }
@@ -261,10 +277,12 @@ const PROXY_HANDLERS: ProxyHandler<{raw: RpcStub}> = {
 // Note that the in the public API, we override the type of RpcStub to reflect the interface
 // exposed by the proxy. That happens in index.ts. But for internal purposes, it's easier to just
 // omit the type parameter.
-export class RpcStub {
+export class RpcStub extends RpcTarget {
   // Although `hook` and `path` are declared `public` here, they are effectively hidden by the
   // proxy.
   constructor(hook: StubHook, pathIfPromise?: PropertyPath) {
+    super();
+
     if (!(hook instanceof StubHook)) {
       // Application invoked the constructor to explicitly construct a stub backed by some value
       // (usually an RpcTarget). (Note we override the types as seen by the app, which is why
@@ -830,7 +848,10 @@ function followPath(value: unknown, parent: object | undefined,
 
       case "rpc-target": {
         // Must be prototype property, and must NOT be inherited from `Object`.
-        value = Object.getPrototypeOf(value)[part];
+        if (Object.hasOwn(<object>value, part)) {
+          throwPathError(path, i);
+        }
+        value = (<any>value)[part];
         if (!value || value === (<any>Object.prototype)[part]) {
           throwPathError(path, i);
         }
