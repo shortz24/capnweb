@@ -189,6 +189,12 @@ class RpcSessionImpl implements Importer, Exporter {
   // to be tracked explicitly.
   private nextExportId = -1;
 
+  // If set, call this when all incoming calls are complete.
+  private onBatchDone?: Omit<PromiseWithResolvers<void>, "promise">;
+
+  // How many promises is our peer expecting us to resolve?
+  private pullCount = 0;
+
   constructor(private transport: RpcTransport, mainHook: StubHook) {
     // Export zero is automatically the bootstrap object.
     this.exports.push({hook: mainHook, refcount: 1});
@@ -288,6 +294,7 @@ class RpcSessionImpl implements Importer, Exporter {
         }
       };
 
+      ++this.pullCount;
       exp.pull = resolve().then(
         payload => {
           // We don't transfer ownership of stubs in the payload since the payload
@@ -313,7 +320,13 @@ class RpcSessionImpl implements Importer, Exporter {
             this.abort(error2);
           }
         }
-      );
+      ).finally(() => {
+        if (--this.pullCount === 0) {
+          if (this.onBatchDone) {
+            this.onBatchDone.resolve();
+          }
+        }
+      });
     }
   }
 
@@ -437,6 +450,9 @@ class RpcSessionImpl implements Importer, Exporter {
     }
 
     this.abortReason = error;
+    if (this.onBatchDone) {
+      this.onBatchDone.reject(error);
+    }
 
     if (this.transport.abort) {
       // Call transport's abort handler, but guard against buggy app code.
@@ -538,6 +554,18 @@ class RpcSessionImpl implements Importer, Exporter {
     }
   }
 
+  async drain(): Promise<void> {
+    if (this.abortReason) {
+      throw this.abortReason;
+    }
+
+    if (this.pullCount > 0) {
+      let {promise, resolve, reject} = Promise.withResolvers<void>();
+      this.onBatchDone = {resolve, reject};
+      await promise;
+    }
+  }
+
   getStats(): {imports: number, exports: number} {
     let result = {imports: 0, exports: 0};
     // We can't just use `.length` because the arrays can be sparse and can have negative indexes.
@@ -574,5 +602,9 @@ export class RpcSession {
 
   getStats(): {imports: number, exports: number} {
     return this.#session.getStats();
+  }
+
+  drain(): Promise<void> {
+    return this.#session.drain();
   }
 }

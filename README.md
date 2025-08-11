@@ -211,15 +211,123 @@ Note that if you pass the same `RpcTarget` instance to RPC multiple times -- thu
 
 ### HTTP batch client
 
-_TODO: Not implemented yet_
+In HTTP batch mode, a batch of RPC calls can be made in a single HTTP request, with the server returning a batch of results.
+
+**JSRPC has a magic trick:** The results of one call in the batch can be used in the parameters to later calls in the same batch, even though the entire batch is sent at once. If you simply take the Promise returned by one call and use it in the parameters to another call, the Promise will be replaced with its resolution before delivering it to the callee. **This is called Promise Pipelining.**
+
+```ts
+import { RpcTarget, RpcStub, newHttpBatchRpcSession } from "@cloudflare/jsrpc";
+
+// Declare our RPC interface.
+interface MyApi extends RpcTarget {
+  // Returns information about the logged-in user.
+  getUserInfo(): UserInfo;
+
+  // Returns a friendly greeting for a user with the given name.
+  greet(name: string): string;
+};
+
+// Start a batch request using this interface.
+using stub: RpcStub<MyApi> = newHttpBatchRpcSession<MyApi>("https://example.com/api");
+
+// The batch will be sent on the next I/O tick (i.e. using setTimeout(sendBatch, 0)). You have
+// until then to add calls to the batch.
+//
+// We can make any number of calls as part of the batch, as long as we store the promises without
+// awaiting them yet.
+let promise1 = stub.greet("Alice");
+let promise2 = stub.greet("Bob");
+
+// Note that a promise returned by one call can be used in the input to another call. The first
+// call's result will be substituted into the second call's parameters on the server side. If the
+// first call returns an object, you can even specify a property of the object to pass to the
+// second call, as shown here.
+let userInfoPromise = stub.getUserInfo();
+let promise3 = stub.greet(userInfoPromise.name);
+
+// Use Promise.all() to wait on all the promises at once. NOTE: You don't necessarily have to
+// use Promise.all(), but you must make sure you have explicitly awaited (or called `.then()` on)
+// all promises before the batch is sent. The system will only ask the server to send back
+// results for the promises you explicitly await. In this example, we have not awaited
+// `userInfoPromise` -- we only used it as a parameter to another call -- so the result will
+// not actually be returned.
+let [greeting1, greeting2, greeting3] = await Promise.all([promise1, promise2, promise3]);
+
+// Now we can do stuff with the results.
+console.log(greeting1);
+console.log(greeting2);
+console.log(greeting3);
+```
 
 ### WebSocket client
 
-_TODO: Not implemented yet_
+In WebSocket mode, the client forms a long-lived connection to the server, allowing us to make many calls over a long period of time. In this mode, the server can even make asynchronous calls back to the client.
+
+```ts
+import { RpcTarget, RpcStub, newWebSocketRpcSession } from "@cloudflare/jsrpc";
+
+// Declare our RPC interface.
+interface MyApi extends RpcTarget {
+  // Returns information about the logged-in user.
+  getUserInfo(): UserInfo;
+
+  // Returns a friendly greeting for a user with the given name.
+  greet(name: string): string;
+};
+
+// Start a WebSocket session.
+using stub: RpcStub<MyApi> = newWebSocketRpcSession<MyApi>("wss://example.com/api");
+
+// With a WebSocket, we can freely make calls over time.
+console.log(await stub.greet("Alice"));
+console.log(await stub.greet("Bob"));
+
+// But we can still use Promise Pipelining to reduce round trips. Note that we should use `using`
+// with promises we don't intend to await so that the system knows when we don't need them anymore.
+{
+  using userInfoPromise = stub.getUserInfo();
+  console.log(await stub.greet(userInfoPromise.name));
+}
+
+// Note that since we never awaited `userInfoPromise`, the server won't even bother sending the
+// response back over the wire.
+```
 
 ### HTTP server on Cloudflare Workers
 
-_TODO: Not implemented yet_
+The helper function `newWorkersRpcResponse()` makes it easy to implement an HTTP server that accepts both the HTTP batch and WebSocket APIs at once:
+
+```ts
+import { RpcTarget, newWorkersRpcResponse } from "@cloudflare/jsrpc";
+
+// Define our server implementation.
+class MyApiImpl extends RpcTarget implements MyApi {
+  constructor(private userInfo: UserInfo) {}
+
+  getUserInfo(): UserInfo {
+    return this.userInfo;
+  }
+
+  greet(name: string): string {
+    return `Hello, ${name}!`;
+  }
+};
+
+// Define our Worker HTTP handler.
+export default {
+  fetch(request: Request, env, ctx) {
+    let userInfo: UserInfo = authenticateFromCookie(request);
+    let url = new URL(request.url);
+
+    // Serve API at `/api`.
+    if (url.pathname === "/api") {
+      return newWorkersRpcResponse(request, new MyApiImpl(userInfo));
+    }
+
+    return new Respnose("Not found", {status: 404});
+  }
+}
+```
 
 ### HTTP server on Node.js
 

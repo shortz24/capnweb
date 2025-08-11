@@ -1,5 +1,6 @@
-import { expect, it, describe } from "vitest"
-import { deserialize, serialize, RpcSession, RpcTransport, RpcTarget, RpcStub, RpcPromise } from "../src/index.js"
+import { expect, it, describe, inject } from "vitest"
+import { deserialize, serialize, RpcSession, RpcTransport, RpcTarget, RpcStub, newWebSocketRpcSession } from "../src/index.js"
+import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '123': 123,
@@ -126,39 +127,6 @@ class TestTransport implements RpcTransport {
 
   forceReceiveError(error: any) {
     this.aborter!(error);
-  }
-}
-
-class Counter extends RpcTarget {
-  constructor(private i: number = 0) {
-    super();
-  }
-
-  increment(amount: number = 1): number {
-    this.i += amount;
-    return this.i;
-  }
-}
-
-class TestTarget extends RpcTarget {
-  square(i: number) {
-    return i * i;
-  }
-
-  callSquare(self: RpcStub<TestTarget>, i: number) {
-    return { result: self.square(i) };
-  }
-
-  throwError() {
-    throw new RangeError("test error");
-  }
-
-  makeCounter(i: number) {
-    return new Counter(i);
-  }
-
-  incrementCounter(c: RpcStub<Counter>, i: number = 1) {
-    return c.increment(i);
   }
 }
 
@@ -858,5 +826,27 @@ describe("e-order", () => {
 
     // Calls should arrive in the order they were made, even across different methods
     expect(callOrder).toEqual([1, 2, 3, 4]);
+  });
+});
+
+// =======================================================================================
+
+describe("WebSockets", () => {
+  it("can open a WebSocket connection", async () => {
+    let url = `ws://${inject("testServerHost")}`;
+
+    let cap = newWebSocketRpcSession<TestTarget>(url);
+
+    expect(await cap.square(5)).toBe(25);
+
+    {
+      let counter = cap.makeCounter(2);
+      expect(await counter.increment(3)).toBe(5);
+    }
+
+    {
+      let counter = new Counter(4);
+      expect(await cap.incrementCounter(counter, 9)).toBe(13);
+    }
   });
 });

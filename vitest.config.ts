@@ -5,6 +5,7 @@ export default defineConfig({
     target: 'es2022', // Transpile using syntax for browser compatibility
   },
   test: {
+    globalSetup: ['__tests__/test-server.ts'],
     projects: [
       // Node.js
       {
@@ -25,6 +26,29 @@ export default defineConfig({
             workers: {
               miniflare: {
                 compatibilityDate: '2025-07-01',
+
+                // Define a backend worker to test server-side functionality. The tests will
+                // talk to it over a service binding. (Only the workerd client tests will talk
+                // to this, not Node nor browsers.)
+                serviceBindings: {
+                  testServer: "test-server-workerd",
+                },
+                workers: [
+                  {
+                    name: "test-server-workerd",
+                    compatibilityDate: '2025-07-01',
+                    modules: [
+                      {
+                        type: "ESModule",
+                        path: "./__tests__/test-server-workerd.js",
+                      },
+                      {
+                        type: "ESModule",
+                        path: "./dist/index.js",
+                      },
+                    ],
+                  }
+                ]
               },
             },
           },
@@ -44,6 +68,7 @@ export default defineConfig({
               { browser: 'chromium' },
             ],
             headless: true,
+            screenshotFailures: false,  // there's nothing to screenshot
           },
         },
       },
@@ -68,6 +93,7 @@ export default defineConfig({
               { browser: 'webkit' },
             ],
             headless: true,
+            screenshotFailures: false,  // there's nothing to screenshot
           },
         },
       },
