@@ -276,6 +276,10 @@ interface MyApi extends RpcTarget {
 };
 
 // Start a WebSocket session.
+//
+// (Note that disposing the root stub will close the connection. Here we declare it with `using` so
+// that the connection will be closed when the stub goes out of scope, but you can also call
+// `stub[Symobl.dispose]()` directly.)
 using stub: RpcStub<MyApi> = newWebSocketRpcSession<MyApi>("wss://example.com/api");
 
 // With a WebSocket, we can freely make calls over time.

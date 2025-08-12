@@ -768,6 +768,21 @@ describe("stub disposal over RPC", () => {
     // Targets should be disposed
     expect(targetDisposed).toBe(true);
   });
+
+  it("shuts down the connection if the main capability is disposed", async () => {
+    // Intentionally dont use `using` here because we expect the stats to be wrong after a
+    // disconnect.
+    let harness = new TestHarness(new TestTarget());
+    let stub = harness.stub;
+
+    let counter = await stub.makeCounter(0);
+
+    stub[Symbol.dispose]();
+
+    await expect(() => counter.increment(1)).rejects.toThrow(
+      new Error("RPC session was shut down by disposing the main stub")
+    );
+  });
 });
 
 describe("e-order", () => {

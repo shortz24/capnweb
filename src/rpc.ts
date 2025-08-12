@@ -177,6 +177,23 @@ class RpcImportHook extends StubHook {
   }
 }
 
+class RpcMainHook extends RpcImportHook {
+  private session?: RpcSessionImpl;
+
+  constructor(entry: ImportTableEntry) {
+    super(false, entry);
+    this.session = entry.session;
+  }
+
+  dispose(): void {
+    if (this.session) {
+      let session = this.session;
+      this.session = undefined;
+      session.shutdown();
+    }
+  }
+}
+
 export type RpcSessionOptions = {
   // If provided, this function will be called whenever an `Error` object is serialized (for any
   // resaon, not just because it was thrown). This can be used to log errors, and also to redact
@@ -225,7 +242,13 @@ class RpcSessionImpl implements Importer, Exporter {
 
   // Should only be called once immediately after construction.
   getMainImport(): RpcImportHook {
-    return new RpcImportHook(false, this.imports[0]);
+    return new RpcMainHook(this.imports[0]);
+  }
+
+  shutdown(): void {
+    // TODO(someday): Should we add some sort of "clean shutdown" mechanism? This gets the job
+    //   done just fine for the moment.
+    this.abort(new Error("RPC session was shut down by disposing the main stub"), false);
   }
 
   exportStub(hook: StubHook): ExportId {
