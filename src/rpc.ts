@@ -177,6 +177,19 @@ class RpcImportHook extends StubHook {
   }
 }
 
+export type RpcSessionOptions = {
+  // If provided, this function will be called whenever an `Error` object is serialized (for any
+  // resaon, not just because it was thrown). This can be used to log errors, and also to redact
+  // them.
+  //
+  // If `onSendError` returns an Error object, than object will be substituted in place of the
+  // original. If it has a stack property, the stack will be sent to the client.
+  //
+  // If `onSendError` doesn't return anything (or is not provided at all), the default behavior is
+  // to serialize the error with the stack omitted.
+  onSendError?: (error: Error) => Error | void;
+};
+
 class RpcSessionImpl implements Importer, Exporter {
   private exports: Array<ExportTableEntry> = [];
   private reverseExports: Map<StubHook, ExportId> = new Map();
@@ -195,7 +208,8 @@ class RpcSessionImpl implements Importer, Exporter {
   // How many promises is our peer expecting us to resolve?
   private pullCount = 0;
 
-  constructor(private transport: RpcTransport, mainHook: StubHook) {
+  constructor(private transport: RpcTransport, mainHook: StubHook,
+      private options: RpcSessionOptions) {
     // Export zero is automatically the bootstrap object.
     this.exports.push({hook: mainHook, refcount: 1});
 
@@ -264,6 +278,12 @@ class RpcSessionImpl implements Importer, Exporter {
     }
   }
 
+  onSendError(error: Error): Error | void {
+    if (this.options.onSendError) {
+      return this.options.onSendError(error);
+    }
+  }
+
   private ensureResolvingExport(exportId: ExportId) {
     let exp = this.exports[exportId];
     if (!exp) {
@@ -307,14 +327,14 @@ class RpcSessionImpl implements Importer, Exporter {
           }
         },
         error => {
-          this.send(["reject", exportId, Devaluator.devaluate(error).value]);
+          this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this).value]);
         }
       ).catch(
         error => {
           // If serialization failed, report the serialization error, which should
           // itself always be serializable.
           try {
-            this.send(["reject", exportId, Devaluator.devaluate(error).value]);
+            this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this).value]);
           } catch (error2) {
             // TODO: Shouldn't happen, now what?
             this.abort(error2);
@@ -585,14 +605,14 @@ export class RpcSession {
   #session: RpcSessionImpl;
   #mainStub: RpcStub;
 
-  constructor(transport: RpcTransport, localMain?: any) {
+  constructor(transport: RpcTransport, localMain?: any, options: RpcSessionOptions = {}) {
     let mainHook: StubHook;
     if (localMain) {
       mainHook = new PayloadStubHook(RpcPayload.fromApp(localMain));
     } else {
       mainHook = new ErrorStubHook(new Error("This connection has no main object."));
     }
-    this.#session = new RpcSessionImpl(transport, mainHook);
+    this.#session = new RpcSessionImpl(transport, mainHook, options);
     this.#mainStub = new RpcStub(this.#session.getMainImport());
   }
 

@@ -1,5 +1,5 @@
 import { RpcStub } from "./core.js";
-import { RpcTransport, RpcSession } from "./rpc.js";
+import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
 
 type SendBatchFunc = (batch: string[]) => Promise<string[]>;
 
@@ -63,11 +63,7 @@ class BatchClientTransport implements RpcTransport {
 }
 
 export function newHttpBatchRpcSession(
-    urlOrRequest: string | Request, init?: RequestInit): RpcStub {
-  if (init) {
-    urlOrRequest = new Request(urlOrRequest, init);
-  }
-
+    urlOrRequest: string | Request, options?: RpcSessionOptions): RpcStub {
   let sendBatch: SendBatchFunc = async (batch: string[]) => {
     let response = await fetch(urlOrRequest, {
       method: "POST",
@@ -84,7 +80,7 @@ export function newHttpBatchRpcSession(
   };
 
   let transport = new BatchClientTransport(sendBatch);
-  let rpc = new RpcSession(transport);
+  let rpc = new RpcSession(transport, undefined, options);
   return rpc.getRemoteMain();
 }
 
@@ -125,7 +121,8 @@ class BatchServerTransport implements RpcTransport {
   }
 }
 
-export async function newHttpBatchRpcResponse(request: Request, localMain: any): Promise<Response> {
+export async function newHttpBatchRpcResponse(
+    request: Request, localMain: any, options?: RpcSessionOptions): Promise<Response> {
   if (request.method !== "POST") {
     return new Response("This endpoint only accepts POST requests.", { status: 405 });
   }
@@ -134,7 +131,7 @@ export async function newHttpBatchRpcResponse(request: Request, localMain: any):
   let batch = body === "" ? [] : body.split("\n");
 
   let transport = new BatchServerTransport(batch);
-  let rpc = new RpcSession(transport, localMain);
+  let rpc = new RpcSession(transport, localMain, options);
 
   // TODO: Arguably we should arrange so any attempts to pull promise resolutions from the client
   //   will reject rather than just hang. But it IS valid to make server->client calls in order to

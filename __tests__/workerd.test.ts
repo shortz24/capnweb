@@ -201,7 +201,8 @@ describe("workerd RPC server", () => {
   })
 
   it("can accept HTTP batch RPC connections", async () => {
-    let cap = newHttpBatchRpcSession<TestTarget>("http://foo", {fetcher: (<Env>env).testServer});
+    let cap = newHttpBatchRpcSession<TestTarget>(
+        new Request("http://foo", {fetcher: (<Env>env).testServer}));
 
     let promise1 = cap.square(6);
 

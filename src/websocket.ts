@@ -1,25 +1,27 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import { RpcStub } from "./core.js";
-import { RpcTransport, RpcSession } from "./rpc.js";
+import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
 
 // Start a WebSocket session given either an already-open WebSocket or a URL.
 //
 // `localMain` is the main RPC interface to expose to the peer. Returns a stub for the main
 // interface exposed from the peer.
-export function newWebSocketRpcSession(webSocket: WebSocket | string, localMain?: any): RpcStub {
+export function newWebSocketRpcSession(
+    webSocket: WebSocket | string, localMain?: any, options?: RpcSessionOptions): RpcStub {
   if (typeof webSocket === "string") {
     webSocket = new WebSocket(webSocket);
   }
 
   let transport = new WebSocketTransport(webSocket);
-  let rpc = new RpcSession(transport, localMain);
+  let rpc = new RpcSession(transport, localMain, options);
   return rpc.getRemoteMain();
 }
 
 // For use in Cloudflare Workers: Construct an HTTP response that starts a WebSocket RPC session
 // with the given `localMain`.
-export function newWorkersWebSocketRpcResponse(request: Request, localMain?: any): Response {
+export function newWorkersWebSocketRpcResponse(
+    request: Request, localMain?: any, options?: RpcSessionOptions): Response {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
     return new Response("This endpoint only accepts WebSocket requests.", { status: 400 });
   }
@@ -27,7 +29,7 @@ export function newWorkersWebSocketRpcResponse(request: Request, localMain?: any
   let pair = new WebSocketPair();
   let server = pair[0];
   server.accept()
-  newWebSocketRpcSession(server, localMain);
+  newWebSocketRpcSession(server, localMain, options);
   return new Response(null, {
     status: 101,
     webSocket: pair[1],

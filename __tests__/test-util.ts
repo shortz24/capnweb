@@ -13,6 +13,11 @@ export class Counter extends RpcTarget {
   }
 }
 
+// Distinct function so we can search for it in the stack trace.
+function throwErrorImpl(): never {
+  throw new RangeError("test error");
+}
+
 export class TestTarget extends RpcTarget {
   square(i: number) {
     return i * i;
@@ -23,7 +28,7 @@ export class TestTarget extends RpcTarget {
   }
 
   throwError() {
-    throw new RangeError("test error");
+    throwErrorImpl();
   }
 
   makeCounter(i: number) {

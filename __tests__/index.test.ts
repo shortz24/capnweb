@@ -1,5 +1,5 @@
 import { expect, it, describe, inject } from "vitest"
-import { deserialize, serialize, RpcSession, RpcTransport, RpcTarget, RpcStub, newWebSocketRpcSession } from "../src/index.js"
+import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget, RpcStub, newWebSocketRpcSession } from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
@@ -150,7 +150,7 @@ class TestHarness<T extends RpcTarget> {
 
   stub: RpcStub<T>;
 
-  constructor(target: T) {
+  constructor(target: T, serverOptions?: RpcSessionOptions) {
     this.clientTransport = new TestTransport("client");
     this.serverTransport = new TestTransport("server", this.clientTransport);
 
@@ -158,7 +158,7 @@ class TestHarness<T extends RpcTarget> {
 
     // TODO: If I remove `<undefined>` here, I get a TypeScript error about the instantiation being
     //   excessively deep and possibly infinite. Why? `<undefined>` is supposed to be the default.
-    this.server = new RpcSession<undefined>(this.serverTransport, target);
+    this.server = new RpcSession<undefined>(this.serverTransport, target, serverOptions);
 
     this.stub = this.client.getRemoteMain();
   }
@@ -826,6 +826,74 @@ describe("e-order", () => {
 
     // Calls should arrive in the order they were made, even across different methods
     expect(callOrder).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("error serialization", () => {
+  it("hides the stack by default", async () => {
+    await using harness = new TestHarness(new TestTarget(), {
+      onSendError: (error) => {
+        // default behavior
+      }
+    });
+    let stub = harness.stub;
+
+    let result = await stub.throwError()
+      .catch(err => {
+        expect(err).toBeInstanceOf(RangeError);
+        expect((err as Error).message).toBe("test error");
+
+        // By default, the stack isn't sent. A stack may be added client-side, though. So we
+        // verify that it doesn't contain the function name `throwErrorImpl` nor the file name
+        // `test-util.ts`, which should only appear on the server.
+        expect((err as Error).stack).not.toContain("throwErrorImpl");
+        expect((err as Error).stack).not.toContain("test-util.ts");
+
+        return "caught";
+      });
+    expect(result).toBe("caught");
+  });
+
+  it("reveals the stack if the callback returns the error", async () => {
+    await using harness = new TestHarness(new TestTarget(), {
+      onSendError: (error) => {
+        return error;
+      }
+    });
+    let stub = harness.stub;
+
+    let result = await stub.throwError()
+      .catch(err => {
+        expect(err).toBeInstanceOf(RangeError);
+        expect((err as Error).message).toBe("test error");
+
+        // Now the error function and source file should be in the stack.
+        expect((err as Error).stack).toContain("throwErrorImpl");
+        expect((err as Error).stack).toContain("test-util.ts");
+
+        return "caught";
+      });
+    expect(result).toBe("caught");
+  });
+
+  it("allows errors to be rewritten", async () => {
+    await using harness = new TestHarness(new TestTarget(), {
+      onSendError: (error) => {
+        let rewritten = new TypeError("rewritten error");
+        rewritten.stack = "test stack";
+        return rewritten;
+      }
+    });
+    let stub = harness.stub;
+
+    let result = await stub.throwError()
+      .catch(err => {
+        expect(err).toBeInstanceOf(TypeError);
+        expect((err as Error).message).toBe("rewritten error");
+        expect((err as Error).stack).toBe("test stack");
+        return "caught";
+      });
+    expect(result).toBe("caught");
   });
 });
 
