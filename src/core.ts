@@ -82,7 +82,8 @@ export function typeForRpc(value: unknown): TypeForRpc {
         //   exported by cloudflare:workers.
         if (prototype == workersModule.RpcStub.prototype ||
             prototype == workersModule.RpcPromise.prototype ||
-            prototype == workersModule.RpcProperty.prototype) {
+            prototype == workersModule.RpcProperty.prototype ||
+            prototype == workersModule.ServiceStub.prototype) {
           return "rpc-target";
         }
       }
