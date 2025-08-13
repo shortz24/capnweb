@@ -40,6 +40,7 @@ export type Serializable<T> =
 interface StubBase<T extends Serializable<T>> extends Disposable {
   [__RPC_STUB_BRAND]: T;
   dup(): this;
+  onRpcBroken(callback: (error: any) => void): void;
 }
 export type Stub<T extends Serializable<T>> =
     T extends object ? Provider<T> & StubBase<T> : StubBase<T>;
@@ -126,8 +127,8 @@ type MaybeDisposable<T> = T extends object ? Disposable : unknown;
 // Intersecting with `(Maybe)Provider` allows pipelining.
 // prettier-ignore
 type Result<R> =
-  R extends Stubable ? Promise<Stub<R>> & Provider<R> & Disposable
-  : R extends Serializable<R> ? Promise<Stubify<R> & MaybeDisposable<R>> & MaybeProvider<R> & Disposable
+  R extends Stubable ? Promise<Stub<R>> & Provider<R> & StubBase<R>
+  : R extends Serializable<R> ? Promise<Stubify<R> & MaybeDisposable<R>> & MaybeProvider<R> & StubBase<R>
   : never;
 
 // Type for method or property on an RPC interface.

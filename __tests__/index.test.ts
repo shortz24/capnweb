@@ -912,6 +912,73 @@ describe("error serialization", () => {
   });
 });
 
+describe("onRpcBroken", () => {
+  it("signals when the connection is lost", async () => {
+    class TestBroken extends RpcTarget {
+      getValue() { return 42; }
+      makeCounter() { return new Counter(0); }
+      hangingCall(): Promise<Counter> {
+        // This call will hang and be interrupted by disconnect
+        return new Promise(() => {}); // Never resolves
+      }
+      throwError(): Promise<Counter> { throw new Error("test error"); }
+    }
+
+    // Intentionally dont use `using` here because we expect the stats to be wrong after a
+    // disconnect.
+    let harness = new TestHarness(new TestBroken());
+    let stub = harness.stub;
+    expect(await stub.getValue()).toBe(42);
+
+    let errors: {which: string, error: any}[] = [];
+    stub.onRpcBroken(error => { errors.push({which: "stub", error}); });
+
+    let counter1Promise = stub.makeCounter();
+    counter1Promise.onRpcBroken(error => { errors.push({which: "counter1Promise", error}); });
+
+    let counter2 = await stub.makeCounter();
+    counter2.onRpcBroken(error => { errors.push({which: "counter2", error}); });
+
+    let counter1 = await counter1Promise;
+    counter1.onRpcBroken(error => { errors.push({which: "counter1", error}); });
+
+    let hangingPromise = stub.hangingCall();
+    hangingPromise.onRpcBroken(error => { errors.push({which: "hangingCall", error}); });
+
+    let throwingPromise = stub.throwError();
+    throwingPromise.onRpcBroken(error => { errors.push({which: "throwError", error}); });
+
+    // The method that threw should report brokenness immediately.
+    await throwingPromise.catch(err => {});
+    expect(errors).toStrictEqual([
+      {which: "throwError", error: new Error("test error")},
+    ]);
+
+    // onRpcBroken() when already broken just reports the error immediately.
+    throwingPromise.onRpcBroken(error => { errors.push({which: "throwError2", error}); });
+    expect(errors).toStrictEqual([
+      {which: "throwError", error: new Error("test error")},
+      {which: "throwError2", error: new Error("test error")},
+    ]);
+
+    // Simulate disconnect by making the transport fail
+    harness.clientTransport.forceReceiveError(new Error("test disconnect"));
+    await hangingPromise.catch(err => {});
+
+    // Now all the other errors were reported, in the order in which the callbacks were
+    // registered.
+    expect(errors).toStrictEqual([
+      {which: "throwError", error: new Error("test error")},
+      {which: "throwError2", error: new Error("test error")},
+      {which: "stub", error: new Error("test disconnect")},
+      {which: "counter1Promise", error: new Error("test disconnect")},
+      {which: "counter2", error: new Error("test disconnect")},
+      {which: "counter1", error: new Error("test disconnect")},
+      {which: "hangingCall", error: new Error("test disconnect")},
+    ]);
+  });
+});
+
 // =======================================================================================
 
 describe("WebSockets", () => {

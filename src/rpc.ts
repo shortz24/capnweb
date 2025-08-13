@@ -43,6 +43,10 @@ class ImportTableEntry {
   private activePull?: PromiseWithResolvers<void>;
   public resolution?: StubHook;
 
+  // List of integer indexes into session.onBrokenCallbacks which are callbacks registered on
+  // this import. Initialized on first use (so `undefined` is the same as an empty list).
+  private onBrokenRegistrations?: number[];
+
   resolve(resolution: StubHook) {
     // TODO: Need embargo handling here? PayloadStubHook needs to be wrapped in a
     // PromiseStubHook awaiting the embargo I suppose. Previous notes on embargoes:
@@ -52,11 +56,35 @@ class ImportTableEntry {
     //   a forwarded call. The caller is responsible for ensuring the last of these is handed off
     //   before direct calls can be delivered.
 
+    if (this.localRefcount == 0) {
+      // Already disposed (canceled), so ignore the resolution and don't send a redundant release.
+      resolution.dispose();
+      return;
+    }
+
     this.resolution = resolution;
     this.sendRelease();
 
-    if (this.localRefcount == 0) {
-      this.resolution.dispose();
+    if (this.onBrokenRegistrations) {
+      // Delete all our callback registrations from this session and re-register them on the
+      // target stub.
+      for (let i of this.onBrokenRegistrations) {
+        let callback = this.session.onBrokenCallbacks[i];
+        let endIndex = this.session.onBrokenCallbacks.length;
+        resolution.onBroken(callback);
+        if (this.session.onBrokenCallbacks[endIndex] === callback) {
+          // Oh, calling onBroken() just registered the callback back on this connection again.
+          // But when the connection dies, we want all the callbacks to be called in the order in
+          // which they were registered. So we don't want this one pushed to the back of the line
+          // here. So, let's remove the newly-added registration and keep the original.
+          // TODO: This is quite hacky, think about whether this is really the right answer.
+          delete this.session.onBrokenCallbacks[endIndex];
+        } else {
+          // The callback is now registered elsewhere, so delete it from our session.
+          delete this.session.onBrokenCallbacks[i];
+        }
+      }
+      this.onBrokenRegistrations = undefined;
     }
 
     if (this.activePull) {
@@ -91,6 +119,22 @@ class ImportTableEntry {
         this.activePull.reject(error);
         this.activePull = undefined;
       }
+
+      // The RpcSession itself will have called all our callbacks so we don't need to track the
+      // registrations anymore.
+      this.onBrokenRegistrations = undefined;
+    }
+  }
+
+  onBroken(callback: (error: any) => void): void {
+    if (this.resolution) {
+      this.resolution.onBroken(callback);
+    } else {
+      let index = this.session.onBrokenCallbacks.length;
+      this.session.onBrokenCallbacks.push(callback);
+
+      if (!this.onBrokenRegistrations) this.onBrokenRegistrations = [];
+      this.onBrokenRegistrations.push(index);
     }
   }
 
@@ -175,6 +219,12 @@ class RpcImportHook extends StubHook {
       }
     }
   }
+
+  onBroken(callback: (error: any) => void): void {
+    if (this.entry) {
+      this.entry.onBroken(callback);
+    }
+  }
 }
 
 class RpcMainHook extends RpcImportHook {
@@ -225,6 +275,10 @@ class RpcSessionImpl implements Importer, Exporter {
   // How many promises is our peer expecting us to resolve?
   private pullCount = 0;
 
+  // Sparse array of onBrokenCallback registrations. Items are strictly appended to the end but
+  // may be deleted from the middle (hence leaving the array sparse).
+  onBrokenCallbacks: ((error: any) => void)[] = [];
+
   constructor(private transport: RpcTransport, mainHook: StubHook,
       private options: RpcSessionOptions) {
     // Export zero is automatically the bootstrap object.
@@ -262,6 +316,7 @@ class RpcSessionImpl implements Importer, Exporter {
       let exportId = this.nextExportId--;
       this.exports[exportId] = { hook, refcount: 1 };
       this.reverseExports.set(hook, exportId);
+      // TODO: Use onBroken().
       return exportId;
     }
   }
@@ -507,8 +562,16 @@ class RpcSessionImpl implements Importer, Exporter {
       }
     }
 
-    // WATCH OUT: this.imports and this.exports are sparse arrays. `for/let/of` will iterate
-    // only positive indexes including deleted indexes -- bad. We need to use `for/let/in` instead.
+    // WATCH OUT: these are sparse arrays. `for/let/of` will iterate only positive indexes
+    // including deleted indexes -- bad. We need to use `for/let/in` instead.
+    for (let i in this.onBrokenCallbacks) {
+      try {
+        this.onBrokenCallbacks[i](error);
+      } catch (err) {
+        // Treat as unhandled rejection.
+        Promise.resolve(err);
+      }
+    }
     for (let i in this.imports) {
       this.imports[i].abort(error);
     }

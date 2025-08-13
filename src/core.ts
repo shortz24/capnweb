@@ -154,6 +154,8 @@ export abstract class StubHook {
   // pull() would return (if any). If a pull() promise is outstanding, it may still resolve (with
   // a disposed payload) or it may reject. It's safe to call dispose() multiple times.
   abstract dispose(): void;
+
+  abstract onBroken(callback: (error: any) => void): void;
 }
 
 export class ErrorStubHook extends StubHook {
@@ -164,6 +166,14 @@ export class ErrorStubHook extends StubHook {
   dup(): StubHook { return this; }
   pull(): RpcPayload | Promise<RpcPayload> { return Promise.reject(this.error); }
   dispose(): void {}
+  onBroken(callback: (error: any) => void): void {
+    try {
+      callback(this.error);
+    } catch (err) {
+      // Don't throw back into the RPC system. Treat this as an unhandled rejection.
+      Promise.resolve(err);
+    }
+  }
 };
 
 const DISPOSED_HOOK: StubHook = new ErrorStubHook(
@@ -329,6 +339,10 @@ export class RpcStub extends RpcTarget {
     } else {
       return new RpcStub(target.hook.dup());
     }
+  }
+
+  onRpcBroken(callback: (error: any) => void) {
+    this[RAW_STUB].hook.onBroken(callback);
   }
 }
 
@@ -991,6 +1005,19 @@ export class PayloadStubHook extends StubHook {
       this.payload = undefined;
     }
   }
+
+  onBroken(callback: (error: any) => void): void {
+    if (this.payload) {
+      if (this.payload.value instanceof RpcStub) {
+        // Payload is a single stub, we should forward onRpcBroken to it.
+        // TODO: Consider prohibiting PayloadStubHook created around a single stub; should always
+        //   use the underlying stub's hook instead?
+        this.payload.value.onRpcBroken(callback);
+      }
+
+      // TODO: Should native stubs be able to implement onRpcBroken?
+    }
+  }
 }
 
 // Many TargetStubHooks could point at the same RpcTarget. We store a refcount in a separate
@@ -1131,6 +1158,10 @@ class TargetStubHook extends StubHook {
       this.target = undefined;
     }
   }
+
+  onBroken(callback: (error: any) => void): void {
+    // TODO: Should RpcTargets be able to implement onRpcBroken?
+  }
 }
 
 // StubHook derived from a Promise for some other StubHook. Waits for the promise and then
@@ -1188,6 +1219,16 @@ class PromiseStubHook extends StubHook {
       }, err => {
         // nothing to dispose
       });
+    }
+  }
+
+  onBroken(callback: (error: any) => void): void {
+    if (this.resolution) {
+      this.resolution.onBroken(callback);
+    } else {
+      this.promise.then(hook => {
+        hook.onBroken(callback);
+      }, callback);
     }
   }
 }
