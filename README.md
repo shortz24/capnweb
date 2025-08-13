@@ -207,6 +207,20 @@ An `RpcTarget` may declare a `Symbol.dispose` method. If it does, the RPC system
 
 Note that if you pass the same `RpcTarget` instance to RPC multiple times -- thus creating multiple stubs -- you will eventually get a separate dispose call for each one. To avoid this, you could use `new RpcStub(target)` to create a single stub upfront, and then pass that stub across multiple RPCs. In this case, you will receive only one call to the target's disposer when all stubs are disposed.
 
+### Listening for disconnect
+
+You can monitor any stub for "brokennness" with its `onRpcBroken()` method:
+
+```ts
+stub.onRpcBroken((error: any) => {
+  console.error(error);
+});
+```
+
+If anything happens to the stub that would cause all further method calls and property accesses to throw exceptions, then the callback will be called. In particular, this happens if:
+* The stub's underlying connection is lost.
+* The stub is a promise, and the promise rejects.
+
 ## Setting up a session
 
 ### HTTP batch client
@@ -276,6 +290,10 @@ interface MyApi extends RpcTarget {
 };
 
 // Start a WebSocket session.
+//
+// (Note that disposing the root stub will close the connection. Here we declare it with `using` so
+// that the connection will be closed when the stub goes out of scope, but you can also call
+// `stub[Symobl.dispose]()` directly.)
 using stub: RpcStub<MyApi> = newWebSocketRpcSession<MyApi>("wss://example.com/api");
 
 // With a WebSocket, we can freely make calls over time.

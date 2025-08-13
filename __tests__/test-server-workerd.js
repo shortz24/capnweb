@@ -48,5 +48,9 @@ export class TestTarget extends RpcTarget {
 export default {
   async fetch(req, env, ctx) {
     return newWorkersRpcResponse(req, new TestTarget());
+  },
+
+  async greet(name, env, ctx) {
+    return `Hello, ${name}!`;
   }
 }

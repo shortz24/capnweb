@@ -1,5 +1,5 @@
 import { expect, it, describe, inject } from "vitest"
-import { deserialize, serialize, RpcSession, RpcTransport, RpcTarget, RpcStub, newWebSocketRpcSession } from "../src/index.js"
+import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget, RpcStub, newWebSocketRpcSession } from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
@@ -150,7 +150,7 @@ class TestHarness<T extends RpcTarget> {
 
   stub: RpcStub<T>;
 
-  constructor(target: T) {
+  constructor(target: T, serverOptions?: RpcSessionOptions) {
     this.clientTransport = new TestTransport("client");
     this.serverTransport = new TestTransport("server", this.clientTransport);
 
@@ -158,7 +158,7 @@ class TestHarness<T extends RpcTarget> {
 
     // TODO: If I remove `<undefined>` here, I get a TypeScript error about the instantiation being
     //   excessively deep and possibly infinite. Why? `<undefined>` is supposed to be the default.
-    this.server = new RpcSession<undefined>(this.serverTransport, target);
+    this.server = new RpcSession<undefined>(this.serverTransport, target, serverOptions);
 
     this.stub = this.client.getRemoteMain();
   }
@@ -768,6 +768,21 @@ describe("stub disposal over RPC", () => {
     // Targets should be disposed
     expect(targetDisposed).toBe(true);
   });
+
+  it("shuts down the connection if the main capability is disposed", async () => {
+    // Intentionally dont use `using` here because we expect the stats to be wrong after a
+    // disconnect.
+    let harness = new TestHarness(new TestTarget());
+    let stub = harness.stub;
+
+    let counter = await stub.makeCounter(0);
+
+    stub[Symbol.dispose]();
+
+    await expect(() => counter.increment(1)).rejects.toThrow(
+      new Error("RPC session was shut down by disposing the main stub")
+    );
+  });
 });
 
 describe("e-order", () => {
@@ -826,6 +841,141 @@ describe("e-order", () => {
 
     // Calls should arrive in the order they were made, even across different methods
     expect(callOrder).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("error serialization", () => {
+  it("hides the stack by default", async () => {
+    await using harness = new TestHarness(new TestTarget(), {
+      onSendError: (error) => {
+        // default behavior
+      }
+    });
+    let stub = harness.stub;
+
+    let result = await stub.throwError()
+      .catch(err => {
+        expect(err).toBeInstanceOf(RangeError);
+        expect((err as Error).message).toBe("test error");
+
+        // By default, the stack isn't sent. A stack may be added client-side, though. So we
+        // verify that it doesn't contain the function name `throwErrorImpl` nor the file name
+        // `test-util.ts`, which should only appear on the server.
+        expect((err as Error).stack).not.toContain("throwErrorImpl");
+        expect((err as Error).stack).not.toContain("test-util.ts");
+
+        return "caught";
+      });
+    expect(result).toBe("caught");
+  });
+
+  it("reveals the stack if the callback returns the error", async () => {
+    await using harness = new TestHarness(new TestTarget(), {
+      onSendError: (error) => {
+        return error;
+      }
+    });
+    let stub = harness.stub;
+
+    let result = await stub.throwError()
+      .catch(err => {
+        expect(err).toBeInstanceOf(RangeError);
+        expect((err as Error).message).toBe("test error");
+
+        // Now the error function and source file should be in the stack.
+        expect((err as Error).stack).toContain("throwErrorImpl");
+        expect((err as Error).stack).toContain("test-util.ts");
+
+        return "caught";
+      });
+    expect(result).toBe("caught");
+  });
+
+  it("allows errors to be rewritten", async () => {
+    await using harness = new TestHarness(new TestTarget(), {
+      onSendError: (error) => {
+        let rewritten = new TypeError("rewritten error");
+        rewritten.stack = "test stack";
+        return rewritten;
+      }
+    });
+    let stub = harness.stub;
+
+    let result = await stub.throwError()
+      .catch(err => {
+        expect(err).toBeInstanceOf(TypeError);
+        expect((err as Error).message).toBe("rewritten error");
+        expect((err as Error).stack).toBe("test stack");
+        return "caught";
+      });
+    expect(result).toBe("caught");
+  });
+});
+
+describe("onRpcBroken", () => {
+  it("signals when the connection is lost", async () => {
+    class TestBroken extends RpcTarget {
+      getValue() { return 42; }
+      makeCounter() { return new Counter(0); }
+      hangingCall(): Promise<Counter> {
+        // This call will hang and be interrupted by disconnect
+        return new Promise(() => {}); // Never resolves
+      }
+      throwError(): Promise<Counter> { throw new Error("test error"); }
+    }
+
+    // Intentionally dont use `using` here because we expect the stats to be wrong after a
+    // disconnect.
+    let harness = new TestHarness(new TestBroken());
+    let stub = harness.stub;
+    expect(await stub.getValue()).toBe(42);
+
+    let errors: {which: string, error: any}[] = [];
+    stub.onRpcBroken(error => { errors.push({which: "stub", error}); });
+
+    let counter1Promise = stub.makeCounter();
+    counter1Promise.onRpcBroken(error => { errors.push({which: "counter1Promise", error}); });
+
+    let counter2 = await stub.makeCounter();
+    counter2.onRpcBroken(error => { errors.push({which: "counter2", error}); });
+
+    let counter1 = await counter1Promise;
+    counter1.onRpcBroken(error => { errors.push({which: "counter1", error}); });
+
+    let hangingPromise = stub.hangingCall();
+    hangingPromise.onRpcBroken(error => { errors.push({which: "hangingCall", error}); });
+
+    let throwingPromise = stub.throwError();
+    throwingPromise.onRpcBroken(error => { errors.push({which: "throwError", error}); });
+
+    // The method that threw should report brokenness immediately.
+    await throwingPromise.catch(err => {});
+    expect(errors).toStrictEqual([
+      {which: "throwError", error: new Error("test error")},
+    ]);
+
+    // onRpcBroken() when already broken just reports the error immediately.
+    throwingPromise.onRpcBroken(error => { errors.push({which: "throwError2", error}); });
+    expect(errors).toStrictEqual([
+      {which: "throwError", error: new Error("test error")},
+      {which: "throwError2", error: new Error("test error")},
+    ]);
+
+    // Simulate disconnect by making the transport fail
+    harness.clientTransport.forceReceiveError(new Error("test disconnect"));
+    await hangingPromise.catch(err => {});
+
+    // Now all the other errors were reported, in the order in which the callbacks were
+    // registered.
+    expect(errors).toStrictEqual([
+      {which: "throwError", error: new Error("test error")},
+      {which: "throwError2", error: new Error("test error")},
+      {which: "stub", error: new Error("test disconnect")},
+      {which: "counter1Promise", error: new Error("test disconnect")},
+      {which: "counter2", error: new Error("test disconnect")},
+      {which: "counter1", error: new Error("test disconnect")},
+      {which: "hangingCall", error: new Error("test disconnect")},
+    ]);
   });
 });
 

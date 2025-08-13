@@ -172,6 +172,11 @@ describe("workerd compatibility", () => {
       expect(await obj.stub.increment()).toBe(2);
     }
   })
+
+  it("can wrap a SerivceStub in an RpcStub", async () => {
+    let result = await new RpcStub((<any>env).testServer).greet("World");
+    expect(result).toBe("Hello, World!");
+  });
 });
 
 interface Env {
@@ -201,7 +206,8 @@ describe("workerd RPC server", () => {
   })
 
   it("can accept HTTP batch RPC connections", async () => {
-    let cap = newHttpBatchRpcSession<TestTarget>("http://foo", {fetcher: (<Env>env).testServer});
+    let cap = newHttpBatchRpcSession<TestTarget>(
+        new Request("http://foo", {fetcher: (<Env>env).testServer}));
 
     let promise1 = cap.square(6);
 

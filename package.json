@@ -33,6 +33,6 @@
   },
   "//": "Force miniflare to use workerd 1.20250809.0 or newer since it contains necessary bugfixes",
   "overrides": {
-    "workerd": ">=1.20250809.0"
+    "workerd": ">=1.20250813.0"
   }
 }

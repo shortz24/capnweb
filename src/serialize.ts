@@ -13,6 +13,8 @@ export interface Exporter {
   // If a serialization error occurs after having exported some capabilities, this will be called
   // to roll back the exports.
   unexport(ids: Array<ExportId>): void;
+
+  onSendError(error: Error): Error | void;
 }
 
 class NullExporter implements Exporter {
@@ -26,6 +28,8 @@ class NullExporter implements Exporter {
     return undefined;
   }
   unexport(ids: Array<ExportId>): void {}
+
+  onSendError(error: Error): Error | void {}
 }
 
 const NULL_EXPORTER = new NullExporter();
@@ -125,12 +129,22 @@ export class Devaluator {
 
       case "error": {
         let e = <Error>value;
+
         // TODO:
-        // - Maybe serialize stack? There are security concerns, and also it's somewhat nonstandard.
         // - Determine type by checking prototype rather than `name`, which can be overridden?
         // - Serialize cause / supressed error / etc.
         // - Serialize added properties.
-        return ["error", e.name, e.message];
+
+        let rewritten = this.exporter.onSendError(e);
+        if (rewritten) {
+          e = rewritten;
+        }
+
+        let result = ["error", e.name, e.message];
+        if (rewritten && rewritten.stack) {
+          result.push(rewritten.stack);
+        }
+        return result;
       }
 
       case "undefined":
@@ -281,7 +295,11 @@ export class Evaluator {
         case "error":
           if (value.length >= 3 && typeof value[1] === "string" && typeof value[2] === "string") {
             let cls = ERROR_TYPES[value[1]] || Error;
-            return new cls(value[2]);
+            let result = new cls(value[2]);
+            if (typeof value[3] === "string") {
+              result.stack = value[3];
+            }
+            return result;
           }
           break;
         case "undefined":
