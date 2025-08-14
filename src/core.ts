@@ -151,6 +151,14 @@ export abstract class StubHook {
   // If pull() returns a promise which rejects, the StubHook does not need to be disposed.
   abstract pull(): RpcPayload | Promise<RpcPayload>;
 
+  // Called to prevent this stub from generating unhandled rejection events if it throws without
+  // having been pulled. Without this, if a client "push"es a call that immediately throws before
+  // the client manages to "pull" it or use it in a pipeline, this may be treated by the system as
+  // an unhandled rejection. Unfortuntaely, this unhandled rejection would be reported in the
+  // callee rather than the caller, possibly causing the callee to crash or log spurious errors,
+  // even though it's really up to the caller to deal with the exception!
+  abstract ignoreUnhandledRejections(): void;
+
   // Attempts to cancel any outstanding promise backing this hook, and disposes the payload that
   // pull() would return (if any). If a pull() promise is outstanding, it may still resolve (with
   // a disposed payload) or it may reject. It's safe to call dispose() multiple times.
@@ -166,6 +174,7 @@ export class ErrorStubHook extends StubHook {
   get(path: PropertyPath): StubHook { return this; }
   dup(): StubHook { return this; }
   pull(): RpcPayload | Promise<RpcPayload> { return Promise.reject(this.error); }
+  ignoreUnhandledRejections(): void {}
   dispose(): void {}
   onBroken(callback: (error: any) => void): void {
     try {
@@ -804,6 +813,63 @@ export class RpcPayload {
         return;
     }
   }
+
+  // Ignore unhandled rejections in all promises in this payload -- that is, all promises that
+  // *would* be awaited if this payload were to be delivered. See the similarly-named method of
+  // StubHook for explanation.
+  ignoreUnhandledRejections(): void {
+    if (this.stubs) {
+      // Propagate to all stubs and promises.
+      this.stubs.forEach(stub => {
+        unwrapStub(stub).hook.ignoreUnhandledRejections();
+      });
+      this.promises!.forEach(
+          promise => unwrapStub(promise.promise).hook.ignoreUnhandledRejections());
+    } else {
+      // Ugh we have to walk the tree.
+      this.ignoreUnhandledRejectionsImpl(this.value);
+    }
+  }
+
+  private ignoreUnhandledRejectionsImpl(value: unknown) {
+    let kind = typeForRpc(value);
+    switch (kind) {
+      case "unsupported":
+      case "primitive":
+      case "date":
+      case "error":
+      case "undefined":
+      case "function":
+      case "rpc-target":
+        return;
+
+      case "array": {
+        let array = <Array<unknown>>value;
+        let len = array.length;
+        for (let i = 0; i < len; i++) {
+          this.ignoreUnhandledRejectionsImpl(array[i]);
+        }
+        return;
+      }
+
+      case "object": {
+        let object = <Record<string, unknown>>value;
+        for (let i in object) {
+          this.ignoreUnhandledRejectionsImpl(object[i]);
+        }
+        return;
+      }
+
+      case "stub":
+      case "rpc-promise":
+        unwrapStub(<RpcStub>value).hook.ignoreUnhandledRejections();
+        return;
+
+      default:
+        kind satisfies never;
+        return;
+    }
+  }
 };
 
 // =======================================================================================
@@ -1000,6 +1066,12 @@ export class PayloadStubHook extends StubHook {
     return this.getPayload();
   }
 
+  ignoreUnhandledRejections(): void {
+    if (this.payload) {
+      this.payload.ignoreUnhandledRejections();
+    }
+  }
+
   dispose(): void {
     if (this.payload) {
       this.payload.dispose();
@@ -1139,6 +1211,10 @@ class TargetStubHook extends StubHook {
     return Promise.reject(new Error("Tried to resolve a non-promise stub."));
   }
 
+  ignoreUnhandledRejections(): void {
+    // Nothing to do.
+  }
+
   dispose(): void {
     if (this.target) {
       if (this.refcount) {
@@ -1208,6 +1284,18 @@ class PromiseStubHook extends StubHook {
       return this.resolution.pull();
     } else {
       return this.promise.then(hook => hook.pull());
+    }
+  }
+
+  ignoreUnhandledRejections(): void {
+    if (this.resolution) {
+      this.resolution.ignoreUnhandledRejections();
+    } else {
+      this.promise.then(res => {
+        res.ignoreUnhandledRejections();
+      }, err => {
+        // Ignore the error!
+      });
     }
   }
 

@@ -642,6 +642,35 @@ describe("promise pipelining", () => {
 
     await expect(() => pipelinedCall).rejects.toThrow("pipelined error");
   });
+
+  it("doesn't create spurious unhandled rejections", async () => {
+    class ErrorTarget extends RpcTarget {
+      throwError(): never {
+        throw new Error("test error");
+      }
+
+      processValue(value: any) {
+        return value * 2;
+      }
+    }
+
+    await using harness = new TestHarness(new ErrorTarget());
+    let stub = harness.stub;
+
+    let promise = stub.throwError();
+    let promise2 = stub.processValue(promise);
+
+    // Intentionally don't await the promises until the next tick. This means we don't pull them,
+    // which means nothing awaits the final result on the server end, which means the errors
+    // could be considered "unhandled rejections". We do not want the server end to actually see
+    // them as such, though, since it's entirely the client's fault that it hasn't waited on them
+    // yet! This tests that the system silences such unhandled rejection notices. Note that
+    // vitest automatically treats unhandled rejections as failures.
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    await expect(() => promise).rejects.toThrow("test error");
+    await expect(() => promise2).rejects.toThrow("test error");
+  });
 });
 
 describe("stub disposal over RPC", () => {
