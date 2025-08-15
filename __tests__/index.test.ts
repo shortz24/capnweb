@@ -1,5 +1,6 @@
 import { expect, it, describe, inject } from "vitest"
-import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget, RpcStub, newWebSocketRpcSession } from "../src/index.js"
+import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
+         RpcStub, newWebSocketRpcSession, newMessagePortRpcSession } from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
@@ -1027,5 +1028,67 @@ describe("WebSockets", () => {
       let counter = new Counter(4);
       expect(await cap.incrementCounter(counter, 9)).toBe(13);
     }
+  });
+});
+
+describe("MessagePorts", () => {
+  it("can communicate over MessageChannel", async () => {
+    // Create a MessageChannel for communication
+    let channel = new MessageChannel();
+
+    // Set up server side with a test object
+    let serverMain = new TestTarget();
+    newMessagePortRpcSession(channel.port1, serverMain);
+
+    // Set up client side
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+
+    // Test basic method call
+    let result = await clientStub.square(5);
+    expect(result).toBe(25);
+
+    // Test nested object
+    let counter = await clientStub.makeCounter(10);
+    expect(await counter.increment()).toBe(11);
+    expect(await counter.increment(5)).toBe(16);
+
+    // Test method that takes a stub as parameter
+    let incrementResult = await clientStub.incrementCounter(counter, 2);
+    expect(incrementResult).toBe(18);
+  });
+
+  it("handles errors correctly", async () => {
+    let channel = new MessageChannel();
+
+    let serverMain = new TestTarget();
+    newMessagePortRpcSession(channel.port1, serverMain);
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+
+    // Test error handling
+    await expect(() => clientStub.throwError()).rejects.toThrow("test error");
+  });
+
+  it("sends close signal when server stub is disposed", async () => {
+    let channel = new MessageChannel();
+
+    let serverMain = new TestTarget();
+    let serverStub = newMessagePortRpcSession(channel.port1, serverMain);
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+
+    // Test that connection works initially
+    let result = await clientStub.square(3);
+    expect(result).toBe(9);
+
+    // Set up broken callback on client
+    let brokenPromise = new Promise<void>((resolve, reject) => {
+      clientStub.onRpcBroken(reject);
+    });
+
+    // Dispose the server stub, which should send a close signal
+    serverStub[Symbol.dispose]();
+
+    // Wait for the client to detect the broken connection
+    expect(() => brokenPromise).rejects.toThrow(
+        new Error("RPC session was shut down by disposing the main stub"));
   });
 });

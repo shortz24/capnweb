@@ -542,7 +542,8 @@ class RpcSessionImpl implements Importer, Exporter {
     if (trySendAbortMessage) {
       try {
         this.transport.send(JSON.stringify(["abort", Devaluator
-            .devaluate(error, undefined, this)]));
+            .devaluate(error, undefined, this)]))
+            .catch(err => {});
       } catch (err) {
         // ignore, probably the whole reason we're aborting is because the transport is broken
       }
