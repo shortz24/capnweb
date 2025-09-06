@@ -26,6 +26,7 @@ export default defineConfig({
             workers: {
               miniflare: {
                 compatibilityDate: '2025-07-01',
+                compatibilityFlags: ["expose_global_message_channel"],
 
                 // Define a backend worker to test server-side functionality. The tests will
                 // talk to it over a service binding. (Only the workerd client tests will talk

@@ -1,5 +1,6 @@
 import { expect, it, describe, inject } from "vitest"
-import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget, RpcStub, newWebSocketRpcSession } from "../src/index.js"
+import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
+         RpcStub, newWebSocketRpcSession, newMessagePortRpcSession } from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
@@ -642,6 +643,35 @@ describe("promise pipelining", () => {
 
     await expect(() => pipelinedCall).rejects.toThrow("pipelined error");
   });
+
+  it("doesn't create spurious unhandled rejections", async () => {
+    class ErrorTarget extends RpcTarget {
+      throwError(): never {
+        throw new Error("test error");
+      }
+
+      processValue(value: any) {
+        return value * 2;
+      }
+    }
+
+    await using harness = new TestHarness(new ErrorTarget());
+    let stub = harness.stub;
+
+    let promise = stub.throwError();
+    let promise2 = stub.processValue(promise);
+
+    // Intentionally don't await the promises until the next tick. This means we don't pull them,
+    // which means nothing awaits the final result on the server end, which means the errors
+    // could be considered "unhandled rejections". We do not want the server end to actually see
+    // them as such, though, since it's entirely the client's fault that it hasn't waited on them
+    // yet! This tests that the system silences such unhandled rejection notices. Note that
+    // vitest automatically treats unhandled rejections as failures.
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    await expect(() => promise).rejects.toThrow("test error");
+    await expect(() => promise2).rejects.toThrow("test error");
+  });
 });
 
 describe("stub disposal over RPC", () => {
@@ -998,5 +1028,67 @@ describe("WebSockets", () => {
       let counter = new Counter(4);
       expect(await cap.incrementCounter(counter, 9)).toBe(13);
     }
+  });
+});
+
+describe("MessagePorts", () => {
+  it("can communicate over MessageChannel", async () => {
+    // Create a MessageChannel for communication
+    let channel = new MessageChannel();
+
+    // Set up server side with a test object
+    let serverMain = new TestTarget();
+    newMessagePortRpcSession(channel.port1, serverMain);
+
+    // Set up client side
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+
+    // Test basic method call
+    let result = await clientStub.square(5);
+    expect(result).toBe(25);
+
+    // Test nested object
+    let counter = await clientStub.makeCounter(10);
+    expect(await counter.increment()).toBe(11);
+    expect(await counter.increment(5)).toBe(16);
+
+    // Test method that takes a stub as parameter
+    let incrementResult = await clientStub.incrementCounter(counter, 2);
+    expect(incrementResult).toBe(18);
+  });
+
+  it("handles errors correctly", async () => {
+    let channel = new MessageChannel();
+
+    let serverMain = new TestTarget();
+    newMessagePortRpcSession(channel.port1, serverMain);
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+
+    // Test error handling
+    await expect(() => clientStub.throwError()).rejects.toThrow("test error");
+  });
+
+  it("sends close signal when server stub is disposed", async () => {
+    let channel = new MessageChannel();
+
+    let serverMain = new TestTarget();
+    let serverStub = newMessagePortRpcSession(channel.port1, serverMain);
+    using clientStub = newMessagePortRpcSession<TestTarget>(channel.port2);
+
+    // Test that connection works initially
+    let result = await clientStub.square(3);
+    expect(result).toBe(9);
+
+    // Set up broken callback on client
+    let brokenPromise = new Promise<void>((resolve, reject) => {
+      clientStub.onRpcBroken(reject);
+    });
+
+    // Dispose the server stub, which should send a close signal
+    serverStub[Symbol.dispose]();
+
+    // Wait for the client to detect the broken connection
+    expect(() => brokenPromise).rejects.toThrow(
+        new Error("RPC session was shut down by disposing the main stub"));
   });
 });

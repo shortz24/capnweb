@@ -210,6 +210,12 @@ class RpcImportHook extends StubHook {
     return entry.awaitResolution();
   }
 
+  ignoreUnhandledRejections(): void {
+    // We don't actually have to do anything here because this method only has to ignore rejections
+    // if pull() is *not* called, and if pull() is not called then we won't generate any rejections
+    // anyway.
+  }
+
   dispose(): void {
     let entry = this.entry;
     this.entry = undefined;
@@ -536,7 +542,8 @@ class RpcSessionImpl implements Importer, Exporter {
     if (trySendAbortMessage) {
       try {
         this.transport.send(JSON.stringify(["abort", Devaluator
-            .devaluate(error, undefined, this)]));
+            .devaluate(error, undefined, this)]))
+            .catch(err => {});
       } catch (err) {
         // ignore, probably the whole reason we're aborting is because the transport is broken
       }
@@ -590,10 +597,14 @@ class RpcSessionImpl implements Importer, Exporter {
           case "push":  // ["push", Expression]
             if (msg.length > 1) {
               let payload = new Evaluator(this).evaluate(msg[1]);
-              this.exports.push({
-                hook: new PayloadStubHook(payload),
-                refcount: 1
-              });
+              let hook = new PayloadStubHook(payload);
+
+              // It's possible for a rejection to occur before the client gets a chance to send
+              // a "pull" message or to use the promise in a pipeline. We don't want that to be
+              // treated as an unhandled rejection on our end.
+              hook.ignoreUnhandledRejections();
+
+              this.exports.push({ hook, refcount: 1 });
               continue;
             }
             break;

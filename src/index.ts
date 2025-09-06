@@ -5,7 +5,8 @@ import { RpcTargetBranded, Serializable, Stub, Stubify, __RPC_TARGET_BRAND } fro
 import { newWebSocketRpcSession as newWebSocketRpcSessionImpl,
          newWorkersWebSocketRpcResponse } from "./websocket.js";
 import { newHttpBatchRpcSession as newHttpBatchRpcSessionImpl,
-         newHttpBatchRpcResponse } from "./batch.js"
+         newHttpBatchRpcResponse } from "./batch.js";
+import { newMessagePortRpcSession as newMessagePortRpcSessionImpl } from "./messageport.js";
 
 // Re-export public API types.
 export { serialize, deserialize, newWorkersWebSocketRpcResponse, newHttpBatchRpcResponse };
@@ -53,6 +54,11 @@ export let newHttpBatchRpcSession:
     <T extends Serializable<T> = Empty>
     (urlOrRequest: string | Request, init?: RequestInit) => Stubify<T> =
     <any>newHttpBatchRpcSessionImpl;
+
+export let newMessagePortRpcSession:
+    <T extends Serializable<T> = Empty>
+    (port: MessagePort, localMain?: any, options?: RpcSessionOptions) => Stubify<T> =
+    <any>newMessagePortRpcSessionImpl;
 
 // Implements inified handling of HTTP-batch and WebSocket responses for the Workers Runtime.
 export function newWorkersRpcResponse(request: Request, localMain: any) {

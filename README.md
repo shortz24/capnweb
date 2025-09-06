@@ -351,6 +351,38 @@ export default {
 
 _TODO: Not implemented yet_
 
+### MessagePort
+
+JSRPC can also talk over MessagePorts. This can be used in a browser to talk to Web Workers, iframes, etc.
+
+```ts
+import { RpcTarget, RpcStub, newMessagePortRpcSession } from "@cloudflare/jsrpc";
+
+// Declare our RPC interface.
+class Greeter extends RpcTarget {
+  greet(name: string): string {
+    return `Hello, ${name}!`;
+  }
+};
+
+// Create a MessageChannel (pair of MessagePorts).
+let channel = new MessageChannel()
+
+// Initialize the server on port1.
+newMessagePortRpcSession(channel.port1, new Greeter());
+
+// Initialize the client on port2.
+using stub: RpcStub<Greeter> = newMessagePortRpcSession<Greeter>(channel.port2);
+
+// Now you can make calls.
+console.log(await stub.greet("Alice"));
+console.log(await stub.greet("Bob"));
+```
+
+Of course, in a real-world scenario, you'd probably want to send one of the two ports to another context. A `MesasgePort` can itself be transferred to another context using `postMessage()`, e.g. `window.postMessage()`, `worker.postMessage()`, or even `port.postMessage()` on some other existing `MesasgePort`.
+
+Note that you should not use a `Window` object itself as a port for RPC -- you should always create a new `MessageChannel` and send one of the ports over. This is because anyone can `postMessage()` to a window, and the RPC system does not authenticate that messages came from the expected sender. You need to verify that you received the port itself from the expected sender first, then let the RPC system take over.
+
 ### Custom transports
 
 You can implement a custom RPC transport across any bidirectional stream. To do so, implement the interface `RpcTransport`, which is defined as follows:
