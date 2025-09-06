@@ -13,6 +13,10 @@ class JsCounter extends RpcTarget {
     this.i += amount;
     return this.i;
   }
+
+  get value() {
+    return this.i;
+  }
 }
 
 class NativeCounter extends RpcTarget {
@@ -22,6 +26,10 @@ class NativeCounter extends RpcTarget {
 
   increment(amount: number = 1): number {
     this.i += amount;
+    return this.i;
+  }
+
+  get value() {
     return this.i;
   }
 }
@@ -49,18 +57,24 @@ describe("workerd compatibility", () => {
     let stub = new NativeRpcStub(new JsCounter());
     expect(await stub.increment()).toBe(1);
     expect(await stub.increment()).toBe(2);
+
+    expect(await stub.value).toBe(2);
   })
 
   it("allows JSRPC RpcStubs to be created using native RpcTargets", async () => {
     let stub = new RpcStub(new NativeCounter());
     expect(await stub.increment()).toBe(1);
     expect(await stub.increment()).toBe(2);
+
+    expect(await stub.value).toBe(2);
   })
 
   it("can wrap a native stub in a JSRPC stub", async () => {
     let stub = new RpcStub(new NativeRpcStub(new NativeCounter()));
     expect(await stub.increment()).toBe(1);
     expect(await stub.increment()).toBe(2);
+
+    expect(await stub.value).toBe(2);
   })
 
   it("can return a native stub from a JSRPC call", async () => {
@@ -70,6 +84,8 @@ describe("workerd compatibility", () => {
       let stub = await factory.getNative();
       expect(await stub.increment()).toBe(1);
       expect(await stub.increment()).toBe(2);
+
+      expect(await stub.value).toBe(2);
     }
 
     // Again with a stub wrapped in an object.
@@ -78,6 +94,8 @@ describe("workerd compatibility", () => {
       let obj = await factory.getNativeEmbedded();
       expect(await obj.stub.increment()).toBe(1);
       expect(await obj.stub.increment()).toBe(2);
+
+      expect(await obj.stub.value).toBe(2);
     }
   })
 
@@ -88,6 +106,8 @@ describe("workerd compatibility", () => {
       let stub = new RpcStub(factory.getNative());
       expect(await stub.increment()).toBe(1);
       expect(await stub.increment()).toBe(2);
+
+      expect(await stub.value).toBe(2);
     }
 
     // Wrap a native RpcProperty in a JSRPC stub.
@@ -96,6 +116,8 @@ describe("workerd compatibility", () => {
       let stub = new RpcStub(factory.getNativeEmbedded().stub);
       expect(await stub.increment()).toBe(1);
       expect(await stub.increment()).toBe(2);
+
+      expect(await stub.value).toBe(2);
     }
   })
 
@@ -105,6 +127,8 @@ describe("workerd compatibility", () => {
       let obj = factory.getNative();
       expect(await obj.increment()).toBe(1);
       expect(await obj.increment()).toBe(2);
+
+      expect(await obj.value).toBe(2);
     }
 
     {
@@ -112,6 +136,8 @@ describe("workerd compatibility", () => {
       let obj = factory.getNativeEmbedded();
       expect(await obj.stub.increment()).toBe(1);
       expect(await obj.stub.increment()).toBe(2);
+
+      expect(await obj.stub.value).toBe(2);
     }
   })
 
@@ -119,6 +145,8 @@ describe("workerd compatibility", () => {
     let stub = new NativeRpcStub(new RpcStub(new JsCounter()));
     expect(await stub.increment()).toBe(1);
     expect(await stub.increment()).toBe(2);
+
+    expect(await stub.value).toBe(2);
   })
 
   it("can return a JSRPC stub from a native call", async () => {
@@ -128,6 +156,8 @@ describe("workerd compatibility", () => {
       let stub = await factory.getJs();
       expect(await stub.increment()).toBe(1);
       expect(await stub.increment()).toBe(2);
+
+      expect(await stub.value).toBe(2);
     }
 
     // Again with a stub wrapped in an object.
@@ -136,6 +166,8 @@ describe("workerd compatibility", () => {
       let obj = await factory.getJsEmbedded();
       expect(await obj.stub.increment()).toBe(1);
       expect(await obj.stub.increment()).toBe(2);
+
+      expect(await obj.stub.value).toBe(2);
     }
   })
 
@@ -146,6 +178,8 @@ describe("workerd compatibility", () => {
       let stub = new NativeRpcStub(factory.getJs());
       expect(await stub.increment()).toBe(1);
       expect(await stub.increment()).toBe(2);
+
+      expect(await stub.value).toBe(2);
     }
 
     // Wrap a JSRPC property (which is actually also an RpcPromise) in a native stub.
@@ -154,6 +188,8 @@ describe("workerd compatibility", () => {
       let stub = new NativeRpcStub(factory.getJsEmbedded().stub);
       expect(await stub.increment()).toBe(1);
       expect(await stub.increment()).toBe(2);
+
+      expect(await stub.value).toBe(2);
     }
   })
 
@@ -163,6 +199,8 @@ describe("workerd compatibility", () => {
       let obj = factory.getJs();
       expect(await obj.increment()).toBe(1);
       expect(await obj.increment()).toBe(2);
+
+      expect(await obj.value).toBe(2);
     }
 
     {
@@ -170,6 +208,8 @@ describe("workerd compatibility", () => {
       let obj = factory.getJsEmbedded();
       expect(await obj.stub.increment()).toBe(1);
       expect(await obj.stub.increment()).toBe(2);
+
+      expect(await obj.stub.value).toBe(2);
     }
   })
 
