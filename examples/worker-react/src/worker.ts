@@ -5,9 +5,12 @@ type Env = {
   DELAY_AUTH_MS?: string;
   DELAY_PROFILE_MS?: string;
   DELAY_NOTIFS_MS?: string;
+  SIMULATED_RTT_MS?: string;
+  SIMULATED_RTT_JITTER_MS?: string;
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const jittered = (base: number, jitter: number) => base + (jitter ? Math.random() * jitter : 0);
 
 const USERS = new Map([
   ['cookie-123', { id: 'u_1', name: 'Ada Lovelace' }],
@@ -65,7 +68,15 @@ export default {
     }
 
     if (url.pathname === '/api') {
+      // Simulate uplink latency (browser -> server)
+      const rttBase = Number(env.SIMULATED_RTT_MS ?? 0);
+      const rttJitter = Number(env.SIMULATED_RTT_JITTER_MS ?? 0);
+      if (rttBase || rttJitter) await sleep(jittered(rttBase, rttJitter));
+
       const resp = await newWorkersRpcResponse(request, new Api(env));
+
+      // Simulate downlink latency (server -> browser)
+      if (rttBase || rttJitter) await sleep(jittered(rttBase, rttJitter));
       // Add CORS so the example also works cross-origin
       const headers = new Headers(resp.headers);
       const origin = request.headers.get('Origin');

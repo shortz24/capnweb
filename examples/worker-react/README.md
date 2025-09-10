@@ -35,10 +35,12 @@ Run locally
 
 Tuning delays
 
-- The Worker simulates server-side method latency. Override defaults via Wrangler vars or env:
+- The Worker simulates server-side latency. Override defaults via Wrangler vars or env:
   - `DELAY_AUTH_MS` (default 80)
   - `DELAY_PROFILE_MS` (default 120)
   - `DELAY_NOTIFS_MS` (default 120)
+  - `SIMULATED_RTT_MS` per direction (default 120)
+  - `SIMULATED_RTT_JITTER_MS` per direction (default 40)
 
 Notes
 
