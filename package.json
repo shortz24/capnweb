@@ -1,5 +1,5 @@
 {
-  "name": "@cloudflare/jsrpc",
+  "name": "capnweb",
   "version": "0.0.1",
   "description": "JavaScript/TypeScript-native RPC library with Promise Pipelining",
   "main": "dist/index.js",

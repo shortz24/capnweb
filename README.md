@@ -1,4 +1,4 @@
-# JavaScript-native RPC
+# Cap'n Web: A JavaScript-native RPC system
 
 This is a JavaScript/TypeScript RPC library that supports:
 
@@ -27,7 +27,7 @@ interface MyApi {
 On the server, export it:
 
 ```ts
-import { receiveRpcOverHttp, RpcTarget } from "jsrpc";
+import { receiveRpcOverHttp, RpcTarget } from "capnweb";
 
 class MyApiImpl extends RpcTarget implements MyApi {
   // ... implement api ...
@@ -227,10 +227,10 @@ If anything happens to the stub that would cause all further method calls and pr
 
 In HTTP batch mode, a batch of RPC calls can be made in a single HTTP request, with the server returning a batch of results.
 
-**JSRPC has a magic trick:** The results of one call in the batch can be used in the parameters to later calls in the same batch, even though the entire batch is sent at once. If you simply take the Promise returned by one call and use it in the parameters to another call, the Promise will be replaced with its resolution before delivering it to the callee. **This is called Promise Pipelining.**
+**Cap'n Web has a magic trick:** The results of one call in the batch can be used in the parameters to later calls in the same batch, even though the entire batch is sent at once. If you simply take the Promise returned by one call and use it in the parameters to another call, the Promise will be replaced with its resolution before delivering it to the callee. **This is called Promise Pipelining.**
 
 ```ts
-import { RpcTarget, RpcStub, newHttpBatchRpcSession } from "@cloudflare/jsrpc";
+import { RpcTarget, RpcStub, newHttpBatchRpcSession } from "capnweb";
 
 // Declare our RPC interface.
 interface MyApi extends RpcTarget {
@@ -278,7 +278,7 @@ console.log(greeting3);
 In WebSocket mode, the client forms a long-lived connection to the server, allowing us to make many calls over a long period of time. In this mode, the server can even make asynchronous calls back to the client.
 
 ```ts
-import { RpcTarget, RpcStub, newWebSocketRpcSession } from "@cloudflare/jsrpc";
+import { RpcTarget, RpcStub, newWebSocketRpcSession } from "capnweb";
 
 // Declare our RPC interface.
 interface MyApi extends RpcTarget {
@@ -316,7 +316,7 @@ console.log(await stub.greet("Bob"));
 The helper function `newWorkersRpcResponse()` makes it easy to implement an HTTP server that accepts both the HTTP batch and WebSocket APIs at once:
 
 ```ts
-import { RpcTarget, newWorkersRpcResponse } from "@cloudflare/jsrpc";
+import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 
 // Define our server implementation.
 class MyApiImpl extends RpcTarget implements MyApi {
@@ -353,10 +353,10 @@ _TODO: Not implemented yet_
 
 ### MessagePort
 
-JSRPC can also talk over MessagePorts. This can be used in a browser to talk to Web Workers, iframes, etc.
+Cap'n Web can also talk over MessagePorts. This can be used in a browser to talk to Web Workers, iframes, etc.
 
 ```ts
-import { RpcTarget, RpcStub, newMessagePortRpcSession } from "@cloudflare/jsrpc";
+import { RpcTarget, RpcStub, newMessagePortRpcSession } from "capnweb";
 
 // Declare our RPC interface.
 class Greeter extends RpcTarget {
