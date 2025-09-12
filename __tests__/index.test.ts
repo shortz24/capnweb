@@ -1088,7 +1088,7 @@ describe("MessagePorts", () => {
     serverStub[Symbol.dispose]();
 
     // Wait for the client to detect the broken connection
-    expect(() => brokenPromise).rejects.toThrow(
-        new Error("RPC session was shut down by disposing the main stub"));
+    await expect(() => brokenPromise).rejects.toThrow(
+        new Error("Peer closed MessagePort connection."));
   });
 });

@@ -170,6 +170,15 @@ export class Devaluator {
         return this.devaluateHook(hook, undefined);
       }
 
+      case "rpc-thenable": {
+        if (!this.source) {
+          throw new Error("Can't serialize RPC stubs in this context.");
+        }
+
+        let hook = this.source.getHookForRpcTarget(<RpcTarget>value, parent);
+        return this.devaluateHook(hook, []);
+      }
+
       default:
         kind satisfies never;
         throw new Error("unreachable");

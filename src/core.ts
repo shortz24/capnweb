@@ -23,7 +23,7 @@ export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
 export type PropertyPath = (string | number)[];
 
 type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
-    "stub" | "rpc-promise" | "rpc-target" | "error" | "undefined";
+    "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" | "undefined";
 
 export function typeForRpc(value: unknown): TypeForRpc {
   switch (typeof value) {
@@ -81,10 +81,13 @@ export function typeForRpc(value: unknown): TypeForRpc {
         // TODO: We also need to match `RpcPromise` and `RpcProperty`, but they currently aren't
         //   exported by cloudflare:workers.
         if (prototype == workersModule.RpcStub.prototype ||
-            prototype == workersModule.RpcPromise.prototype ||
-            prototype == workersModule.RpcProperty.prototype ||
             prototype == workersModule.ServiceStub.prototype) {
           return "rpc-target";
+        } else if (prototype == workersModule.RpcPromise.prototype ||
+                   prototype == workersModule.RpcProperty.prototype) {
+          // Like rpc-target, but should be wrapped in RpcPromise, so that it can be pull()ed,
+          // which will await the thenable.
+          return "rpc-thenable";
         }
       }
 
@@ -610,11 +613,32 @@ export class RpcPayload {
       case "function":
       case "rpc-target": {
         let target = <RpcTarget | Function>value;
+        let stub: RpcStub;
         if (owner) {
-          return new RpcStub(owner.getHookForRpcTarget(target, oldParent).dup());
+          stub = new RpcStub(owner.getHookForRpcTarget(target, oldParent).dup());
         } else {
-          return new RpcStub(TargetStubHook.create(target, oldParent));
+          stub = new RpcStub(TargetStubHook.create(target, oldParent));
         }
+        this.stubs!.push(stub);
+        return stub;
+      }
+
+      case "rpc-thenable": {
+        let target = <RpcTarget>value;
+        let promise: RpcPromise;
+        if (owner) {
+          // NOTE: getHookForRpcTarget() here will return a hook that is not disposed by
+          //   disposeImpl() since this is an rpc-thenable, which correctly implements the rule
+          //   that we don't own promises.
+          promise = new RpcPromise(owner.getHookForRpcTarget(target, oldParent).dup(), []);
+        } else {
+          // NOTE: the extra .dup() here intentionally prevents this TargetStubHook from ever
+          //   being fully disposed and thus prevents the disposer of `target` from being run. This
+          //   correctly implements the rule that we don't take ownership of promises.
+          promise = new RpcPromise(TargetStubHook.create(target, oldParent).dup(), []);
+        }
+        this.promises!.push({parent, property, promise});
+        return promise;
       }
 
       default:
@@ -808,6 +832,10 @@ export class RpcPayload {
         return;
       }
 
+      case "rpc-thenable":
+        // Since thenables are promises, we don't own them, so we don't dispose them.
+        return;
+
       default:
         kind satisfies never;
         return;
@@ -863,6 +891,10 @@ export class RpcPayload {
       case "stub":
       case "rpc-promise":
         unwrapStub(<RpcStub>value).hook.ignoreUnhandledRejections();
+        return;
+
+      case "rpc-thenable":
+        (<any>value).then((_: any) => {}, (_: any) => {});
         return;
 
       default:
@@ -927,7 +959,8 @@ function followPath(value: unknown, parent: object | undefined,
         value = (<any>value)[part];
         break;
 
-      case "rpc-target": {
+      case "rpc-target":
+      case "rpc-thenable": {
         // Must be prototype property, and must NOT be inherited from `Object`.
         if (Object.hasOwn(<object>value, part)) {
           throwPathError(path, i);
@@ -1206,9 +1239,18 @@ class TargetStubHook extends StubHook {
   }
 
   pull(): RpcPayload | Promise<RpcPayload> {
-    // This shouldn't be called since RpcTarget always becomes RpcStub, not RpcPromise, and you
-    // can only pull a promise.
-    return Promise.reject(new Error("Tried to resolve a non-promise stub."));
+    let target = this.getTarget();
+    if ("then" in target) {
+      // If the target is itself thenable, we allow it to be treated as a promise. This is used
+      // in particular to support wrapping a workerd-native RpcPromise or RpcProperty.
+      return Promise.resolve(target).then(resolution => {
+        return RpcPayload.fromApp(resolution);
+      });
+    } else {
+      // This shouldn't be called since RpcTarget always becomes RpcStub, not RpcPromise, and you
+      // can only pull a promise.
+      return Promise.reject(new Error("Tried to resolve a non-promise stub."));
+    }
   }
 
   ignoreUnhandledRejections(): void {
