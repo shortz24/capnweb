@@ -1,4 +1,4 @@
-import { StubHook, RpcPayload, RpcStub, unwrapStub, PropertyPath, PayloadStubHook, ErrorStubHook, RpcTarget } from "./core.js";
+import { StubHook, RpcPayload, RpcStub, PropertyPath, PayloadStubHook, ErrorStubHook, RpcTarget, unwrapStubAndPath } from "./core.js";
 import { Devaluator, Evaluator, ExportId, ImportId, Exporter, Importer, serialize } from "./serialize.js";
 
 // Interface for an RPC transport, which is a simple bidirectional message stream.
@@ -379,7 +379,7 @@ class RpcSessionImpl implements Importer, Exporter {
         for (;;) {
           let payload = await hook.pull();
           if (payload.value instanceof RpcStub) {
-            let {hook: inner, pathIfPromise} = unwrapStub(payload.value);
+            let {hook: inner, pathIfPromise} = unwrapStubAndPath(payload.value);
             if (pathIfPromise && pathIfPromise.length == 0) {
               if (this.getImport(hook) === undefined) {
                 // Optimization: The resolution is just another promise, and it is not a promise
@@ -403,22 +403,18 @@ class RpcSessionImpl implements Importer, Exporter {
         payload => {
           // We don't transfer ownership of stubs in the payload since the payload
           // belongs to the hook which sticks around to handle pipelined requests.
-          let {value, deferredDisposals} = Devaluator.devaluate(
-              payload.value, undefined, this, payload, /*takeOwnership=*/false);
+          let value = Devaluator.devaluate(payload.value, undefined, this, payload);
           this.send(["resolve", exportId, value]);
-          if (deferredDisposals) {
-            deferredDisposals?.forEach(d => d.dispose());
-          }
         },
         error => {
-          this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this).value]);
+          this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this)]);
         }
       ).catch(
         error => {
           // If serialization failed, report the serialization error, which should
           // itself always be serializable.
           try {
-            this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this).value]);
+            this.send(["reject", exportId, Devaluator.devaluate(error, undefined, this)]);
           } catch (error2) {
             // TODO: Shouldn't happen, now what?
             this.abort(error2);
@@ -498,13 +494,11 @@ class RpcSessionImpl implements Importer, Exporter {
     let value: Array<any> = ["pipeline", id, path];
     let deferredDisposals: StubHook[] | undefined;
     if (args) {
-      let devalue = Devaluator.devaluate(
-          args.value, undefined, this, args, /*takeOwnership=*/true);
-      deferredDisposals = devalue.deferredDisposals;
+      let devalue = Devaluator.devaluate(args.value, undefined, this, args);
 
       // HACK: Since the args is an array, devaluator will wrap in a second array. Need to unwrap.
       // TODO: Clean this up somehow.
-      value.push((<Array<unknown>>devalue.value)[0]);
+      value.push((<Array<unknown>>devalue)[0]);
 
       // Serializing the payload takes ownership of all stubs within, so the payload itself does
       // not need to be disposed.
@@ -705,7 +699,7 @@ export class RpcSession {
   constructor(transport: RpcTransport, localMain?: any, options: RpcSessionOptions = {}) {
     let mainHook: StubHook;
     if (localMain) {
-      mainHook = new PayloadStubHook(RpcPayload.fromApp(localMain));
+      mainHook = new PayloadStubHook(RpcPayload.fromAppReturn(localMain));
     } else {
       mainHook = new ErrorStubHook(new Error("This connection has no main object."));
     }

@@ -204,7 +204,7 @@ const PROXY_HANDLERS: ProxyHandler<{raw: RpcStub}> = {
   apply(target: {raw: RpcStub}, thisArg: any, argumentsList: any[]) {
     let stub = target.raw;
     return new RpcPromise(stub.hook.call(
-        stub.pathIfPromise || [], RpcPayload.fromApp(argumentsList)), []);
+        stub.pathIfPromise || [], RpcPayload.fromAppParams(argumentsList)), []);
   },
 
   get(target: {raw: RpcStub}, prop: string | symbol, receiver: any) {
@@ -315,7 +315,9 @@ export class RpcStub extends RpcTarget {
       if (value instanceof RpcTarget || value instanceof Function) {
         hook = TargetStubHook.create(value, undefined);
       } else {
-        hook = new PayloadStubHook(RpcPayload.fromApp(value));
+        // We adopt the value with "return" semantics since we want to take ownership of any stubs
+        // within.
+        hook = new PayloadStubHook(RpcPayload.fromAppReturn(value));
       }
 
       // Don't let app set this.
@@ -380,15 +382,81 @@ export class RpcPromise extends RpcStub {
   }
 }
 
+// Given a stub (still wrapped in a Proxy), extract the underlying `StubHook`.
+//
+// The caller takes ownership, meaning it's expected that the original stub will never be disposed
+// itself, but the caller is responsible for calling `dispose()` on the returned hook.
+//
+// However, if the stub points to a property of some other stub or promise, then no ownership is
+// "transferred" because properties do not actually have disposers. However, the returned hook is
+// a new hook that aliases that property, but does actually need to be disposed.
+//
+// The result is a promise (i.e. can be pull()ed) if and only if the input is a promise.
+export function unwrapStubTakingOwnership(stub: RpcStub): StubHook {
+  let {hook, pathIfPromise} = stub[RAW_STUB];
+
+  if (pathIfPromise && pathIfPromise.length > 0) {
+    return hook.get(pathIfPromise);
+  } else {
+    return hook;
+  }
+}
+
+// Given a stub (still wrapped in a Proxy), extract the underlying `StubHook`, and dulpicate it,
+// returning the duplicate.
+//
+// The caller is responsible for disposing the returned hook, but the original stub also still
+// needs to be disposed by its owner (unless it is a proprety, which never needs disposal).
+//
+// The result is a promise (i.e. can be pull()ed) if and only if the input is a promise. Note that
+// this differs from the semantics of the actual `dup()` method.
+export function unwrapStubAndDup(stub: RpcStub): StubHook {
+  let {hook, pathIfPromise} = stub[RAW_STUB];
+
+  if (pathIfPromise) {
+    return hook.get(pathIfPromise);
+  } else {
+    return hook.dup();
+  }
+}
+
+// Unwrap a stub returning the underlying `StubHook`, returning `undefined` if it is a property
+// stub.
+//
+// This function is agnostic to ownership transfer. Excatly one of `stub` or the return `hook` must
+// eventually be disposed (unless `undefined` is returned, in which case neither need to be
+// disposed, as properties are not normally disposable).
+export function unwrapStubNoProperties(stub: RpcStub): StubHook | undefined {
+  let {hook, pathIfPromise} = stub[RAW_STUB];
+
+  if (pathIfPromise && pathIfPromise.length > 0) {
+    return undefined;
+  }
+
+  return hook;
+}
+
+// Unwrap a stub returning the underlying `StubHook`. If it's a property, return the `StubHook`
+// representing the stub or promise of which is is a proprety.
+//
+// This function is agnostic to ownership transfer. Excatly one of `stub` or the return `hook` must
+// eventually be disposed.
+export function unwrapStubOrParent(stub: RpcStub): StubHook {
+  return stub[RAW_STUB].hook;
+}
+
 // Given a stub (still wrapped in a Proxy), extract the `hook` and `pathIfPromise` properties.
-export function unwrapStub(stub: RpcStub): {hook: StubHook, pathIfPromise?: PropertyPath} {
+//
+// This function is agnostic to ownership transfer. Excatly one of `stub` or the return `hook` must
+// eventually be disposed.
+export function unwrapStubAndPath(stub: RpcStub): {hook: StubHook, pathIfPromise?: PropertyPath} {
   return stub[RAW_STUB];
 }
 
 // Given a promise stub (still wrapped in a Proxy), pull the remote promise and deliver the
 // payload. This is a helper used to implement the then/catch/finally methods of RpcPromise.
 async function pullPromise(promise: RpcPromise): Promise<unknown> {
-  let {hook, pathIfPromise} = unwrapStub(promise);
+  let {hook, pathIfPromise} = promise[RAW_STUB];
   if (pathIfPromise!.length > 0) {
     // If this isn't the root promise, we have to clone it and pull the clone. This is a little
     // weird in terms of disposal: There's no way for the app to dispose/cancel the promise while
@@ -464,13 +532,24 @@ export type LocatedPromise = {parent: object, property: string | number, promise
 //   taking ownership of stubs -- then the payload will NOT be disposed explicitly, so this step
 //   will not be needed.
 export class RpcPayload {
-  // Create a payload from a value provided by the app.
+  // Create a payload from a value passed as params to an RPC from the app.
   //
-  // The payload takes ownership of all stubs in `value`, but promises not to modify `value`
-  // itself. If the payload is delivered locally, `value` will be deep-copied first, so as not
-  // to have the sender and recipient end up sharing the same mutable object.
-  public static fromApp(value: unknown) {
-    return new RpcPayload(value);
+  // The payload does NOT take ownership of any stubs in `value`, and but promises not to modify
+  // `value`. If the payload is delivered locally, `value` will be deep-copied first, so as not
+  // to have the sender and recipient end up sharing the same mutable object. `value` will not be
+  // touched again after the call returns synchronously (returns a promise) -- by that point,
+  // the value has either been copied or serialized to the wire.
+  public static fromAppParams(value: unknown) {
+    return new RpcPayload(value, "params");
+  }
+
+  // Create a payload from a value return from an RPC implementation by the app.
+  //
+  // Unlike fromAppParams(), in this case the payload takes ownership of all stubs in `value`, and
+  // may hold onto `value` for an arbitarily long time (e.g. to serve pipelined requests). It
+  // will still avoid modifying `value` and will make a deep copy if it is delivered locally.
+  public static fromAppReturn(value: unknown) {
+    return new RpcPayload(value, "return");
   }
 
   // Create a payload from a value parsed off the wire using Evaluator.evaluate().
@@ -485,7 +564,7 @@ export class RpcPayload {
   // modify the value in preparation for delivery, and may deliver the value directly to the app
   // without copying.
   public static forEvaluate(stubs: RpcStub[], promises: LocatedPromise[]) {
-    return new RpcPayload(null, stubs, promises);
+    return new RpcPayload(null, "owned", stubs, promises);
   }
 
   // Deep-copy the given value, including dup()ing all stubs.
@@ -496,9 +575,7 @@ export class RpcPayload {
   // RpcTargets found within don't get duplicate stubs.
   public static deepCopyFrom(
       value: unknown, oldParent: object | undefined, owner: RpcPayload | null): RpcPayload {
-    let result = new RpcPayload(null);
-    result.stubs = [];
-    result.promises = [];
+    let result = new RpcPayload(null, "owned", [], []);
     result.value = result.deepCopy(value, oldParent, "value", result, /*dupStubs=*/true, owner);
     return result;
   }
@@ -508,10 +585,17 @@ export class RpcPayload {
     // The payload value.
     public value: unknown,
 
-    // `stubs` and `promises` are filled in only if `value` belongs to us and can safely be
-    // delivered to the app. If `value` came from thne app in the first place, then it cannot
-    // be delivered back to the app nor modified by us without first deep-copying it. `stubs` and
-    // `promises` will be computed as part of the deep-copy.
+    // What is the provinance of `value`?
+    // "params": It came from the app, in params to a call. We must dupe any stubs within.
+    // "return": It came from the app, returned from a call. We take ownership of all stubs within.
+    // "owned": This value belongs fully to us, either because it was deserialized from the wire
+    //   or because we deep-copied a value from the app.
+    private source: "params" | "return" | "owned",
+
+    // `stubs` and `promises` are filled in only if `value` belongs to us (`source` is "owned") and
+    // so can safely be delivered to the app. If `value` came from thne app in the first place,
+    // then it cannot be delivered back to the app nor modified by us without first deep-copying
+    // it. `stubs` and `promises` will be computed as part of the deep-copy.
 
     // All non-promise stubs found in `value`. Provided so that they can easily be disposed.
     private stubs?: RpcStub[],
@@ -521,34 +605,51 @@ export class RpcPayload {
     private promises?: LocatedPromise[]
   ) {}
 
-  // Map of StubHooks that have been constructed around RpcTargets in this payload. It's important
-  // that each target only has a new hook created once, and any further hooks needed are dup()ed
-  // from that one, so that we can make sure the RpcTarget's disposer is invoked only once.
-  //
-  // In practice this map is populated when either making a deep copy or serializing the payload.
-  //
-  // This map is only needed when `value` originates directly from the app -- because otherwise,
-  // `value` can't possibly contain any `RpcTarget`s (they would have been turned into stubs
-  // earlier).
+  // For `soruce === "return"` payloads only, this tracks any StubHooks created around RpcTargets
+  // found in the payload at the time that it is serialized (or deep-copied) for return, so that we
+  // can make sure they are not disposed before the pipeline ends.
   //
   // This is initialized on first use.
   private rpcTargets?: Map<RpcTarget | Function, StubHook>;
 
-  public isFromApp(): boolean {
-    return !this.stubs;
-  }
-
   // Get the StubHook representing the given RpcTarget found inside this payload.
-  public getHookForRpcTarget(target: RpcTarget | Function, parent: object | undefined): StubHook {
-    if (!this.rpcTargets) this.rpcTargets = new Map;
+  public getHookForRpcTarget(target: RpcTarget | Function, parent: object | undefined,
+                             dupStubs: boolean = true): StubHook {
+    if (this.source === "params") {
+      return TargetStubHook.create(target, parent);
+    } else if (this.source === "return") {
+      // If dupStubs is true, we want to both make sure the map contains the stub, and also return
+      // a dup of that stub.
+      //
+      // If dupStubs is false, then we are being called as part of ensureDeepCopy(), i.e. replacing
+      // ourselves with a deep copy. In this case we actually want the copy to end up owning all
+      // the hooks, and the map to be left empty. So what we do in this case is:
+      // * If the target is not in the map, we just create it, but don't populate the map.
+      // * If the target *is* in the map, we *remove* the hook from the map, and return it.
 
-    let hook = this.rpcTargets.get(target);
-    if (!hook) {
-      hook = TargetStubHook.create(target, parent);
-      this.rpcTargets.set(target, hook);
+      let hook = this.rpcTargets?.get(target);
+      if (hook) {
+        if (dupStubs) {
+          return hook.dup();
+        } else {
+          this.rpcTargets?.delete(target);
+          return hook;
+        }
+      } else {
+        hook = TargetStubHook.create(target, parent);
+        if (dupStubs) {
+          if (!this.rpcTargets) {
+            this.rpcTargets = new Map;
+          }
+          this.rpcTargets.set(target, hook);
+          return hook.dup();
+        } else {
+          return hook;
+        }
+      }
+    } else {
+      throw new Error("owned payload shouldn't contain raw RpcTargets");
     }
-
-    return hook;
   }
 
   private deepCopy(
@@ -593,21 +694,21 @@ export class RpcPayload {
       case "stub":
       case "rpc-promise": {
         let stub = <RpcStub>value;
-        let {hook, pathIfPromise} = unwrapStub(stub);
-        if (pathIfPromise) {
-          // This is a promise. We do not take ownership of promises from the app, only stubs.
-          // Instead, we can use `get()` to make a copy of the promise, which we then own. We
-          // might as well get() the specific path while we're at it.
-          stub = new RpcPromise(hook.get(pathIfPromise), []);
-        } else if (dupStubs) {
-          stub = stub.dup();
+        let hook: StubHook;
+        if (dupStubs) {
+          hook = unwrapStubAndDup(stub);
+        } else {
+          hook = unwrapStubTakingOwnership(stub);
         }
         if (stub instanceof RpcPromise) {
-          this.promises!.push({parent, property, promise: stub});
+          let promise = new RpcPromise(hook, []);
+          this.promises!.push({parent, property, promise});
+          return promise;
         } else {
-          this.stubs!.push(stub);
+          let newStub = new RpcStub(hook);
+          this.stubs!.push(newStub);
+          return newStub;
         }
-        return stub;
       }
 
       case "function":
@@ -615,7 +716,7 @@ export class RpcPayload {
         let target = <RpcTarget | Function>value;
         let stub: RpcStub;
         if (owner) {
-          stub = new RpcStub(owner.getHookForRpcTarget(target, oldParent).dup());
+          stub = new RpcStub(owner.getHookForRpcTarget(target, oldParent, dupStubs));
         } else {
           stub = new RpcStub(TargetStubHook.create(target, oldParent));
         }
@@ -627,15 +728,9 @@ export class RpcPayload {
         let target = <RpcTarget>value;
         let promise: RpcPromise;
         if (owner) {
-          // NOTE: getHookForRpcTarget() here will return a hook that is not disposed by
-          //   disposeImpl() since this is an rpc-thenable, which correctly implements the rule
-          //   that we don't own promises.
-          promise = new RpcPromise(owner.getHookForRpcTarget(target, oldParent).dup(), []);
+          promise = new RpcPromise(owner.getHookForRpcTarget(target, oldParent, dupStubs), []);
         } else {
-          // NOTE: the extra .dup() here intentionally prevents this TargetStubHook from ever
-          //   being fully disposed and thus prevents the disposer of `target` from being run. This
-          //   correctly implements the rule that we don't take ownership of promises.
-          promise = new RpcPromise(TargetStubHook.create(target, oldParent).dup(), []);
+          promise = new RpcPromise(TargetStubHook.create(target, oldParent), []);
         }
         this.promises!.push({parent, property, promise});
         return promise;
@@ -647,16 +742,34 @@ export class RpcPayload {
     }
   }
 
-  // Ensures that if the value originally came from an unowned source, we
-  private ensureDeepCopied() {
-    if (this.stubs === undefined) {
+  // Ensures that if the value originally came from an unowned source, we have replaced it with a
+  // deep copy.
+  public ensureDeepCopied() {
+    if (this.source !== "owned") {
+      // If we came from call params, we need to dupe any stubs. Otherwise (we came from a return),
+      // we take ownership of all stubs.
+      let dupStubs = this.source === "params";
+
       this.stubs = [];
       this.promises = [];
 
-      // Deep-copy the value, but not the stubs.
-      this.value = this.deepCopy(this.value, undefined, "value", this, /*dupStubs=*/false, this);
+      // Deep-copy the value.
+      try {
+        this.value = this.deepCopy(this.value, undefined, "value", this, dupStubs, this);
+      } catch (err) {
+        // Roll back the change.
+        this.stubs = undefined;
+        this.promises = undefined;
+        throw err;
+      }
 
-      // We can throw away `rpcTargets` as the deep-copied value contains the stubs now.
+      // We now own the value.
+      this.source = "owned";
+
+      // `rpcTargets` should have been left empty. We can throw it out.
+      if (this.rpcTargets && this.rpcTargets.size > 0) {
+        throw new Error("Not all rpcTargets were accounted for in deep-copy?");
+      }
       this.rpcTargets = undefined;
     }
   }
@@ -683,11 +796,12 @@ export class RpcPayload {
   private static deliverRpcPromiseTo(
       promise: RpcPromise, parent: object, property: string | number,
       promises: Promise<unknown>[]) {
-    let {hook, pathIfPromise} = unwrapStub(promise);
-    if (pathIfPromise && pathIfPromise.length > 0) {
-      // deepCopy() should have eliminated this.
+    // deepCopy() should have replaced any property stubs with normal promise stubs.
+    let hook = unwrapStubNoProperties(promise);
+    if (!hook) {
       throw new Error("property promises should have been resolved earlier");
     }
+
     let inner = hook.pull();
     if (inner instanceof RpcPayload) {
       // Immediately resolved to payload.
@@ -730,11 +844,11 @@ export class RpcPayload {
         // Special case: If the function immediately returns RpcPromise, we don't want to await it,
         // since that will actually wait for the promise. Instead we want to construct a payload
         // around it directly.
-        return RpcPayload.fromApp(result);
+        return RpcPayload.fromAppReturn(result);
       } else {
         // In all other cases, await the result (which may or may not be a promise, but `await`
         // will just pass through non-promises).
-        return RpcPayload.fromApp(await result);
+        return RpcPayload.fromAppReturn(await result);
       }
     } finally {
       this.dispose();
@@ -773,20 +887,28 @@ export class RpcPayload {
   }
 
   public dispose() {
-    if (this.stubs) {
+    if (this.source === "owned") {
       // Oh good, we can just run through them.
-      this.stubs.forEach(stub => stub[Symbol.dispose]());
+      this.stubs!.forEach(stub => stub[Symbol.dispose]());
       this.promises!.forEach(promise => promise.promise[Symbol.dispose]());
-    } else {
-      // Value received directly from app, must recursively scan it for things to dispose.
+    } else if (this.source === "return") {
+      // Value received directly from app as a return value. We take ownership of all stubs, so we
+      // must recursively scan it for things to dispose.
       this.disposeImpl(this.value, undefined);
+      if (this.rpcTargets && this.rpcTargets.size > 0) {
+        throw new Error("Not all rpcTargets were accounted for in disposeImpl()?");
+      }
+    } else {
+      // this.source is "params". We don't own the stubs within.
     }
 
     // Make dispose() idempotent.
+    this.source = "owned";
     this.stubs = [];
     this.promises = [];
   }
 
+  // Recursive dispose, called only when `source` is "return".
   private disposeImpl(value: unknown, parent: object | undefined) {
     let kind = typeForRpc(value);
     switch (kind) {
@@ -817,9 +939,8 @@ export class RpcPayload {
       case "stub":
       case "rpc-promise": {
         let stub = <RpcStub>value;
-        let {hook, pathIfPromise} = unwrapStub(stub);
-        // We don't own promises, only stubs.
-        if (!pathIfPromise) {
+        let hook = unwrapStubNoProperties(stub);
+        if (hook) {
           hook.dispose();
         }
         return;
@@ -828,7 +949,20 @@ export class RpcPayload {
       case "function":
       case "rpc-target": {
         let target = <RpcTarget | Function>value;
-        this.getHookForRpcTarget(target, parent).dispose();
+        let hook = this.rpcTargets?.get(target);
+        if (hook) {
+          // We created a hook around this target earlier. Dispose it now.
+          hook.dispose();
+          this.rpcTargets!.delete(target);
+        } else {
+          // There never was a stub pointing at this target. This could be because:
+          // * The call was used only for promise pipelining, so the result was never serialized,
+          //   so it never got added to `rpcTargets`.
+          // * The same RpcTarget appears in the results twice, and we already disposed the hook
+          //   when we saw it earlier. Note that it's intentional that we should call the disposer
+          //   twice if the same object appears twice.
+          disposeRpcTarget(target);
+        }
         return;
       }
 
@@ -849,10 +983,10 @@ export class RpcPayload {
     if (this.stubs) {
       // Propagate to all stubs and promises.
       this.stubs.forEach(stub => {
-        unwrapStub(stub).hook.ignoreUnhandledRejections();
+        unwrapStubOrParent(stub).ignoreUnhandledRejections();
       });
       this.promises!.forEach(
-          promise => unwrapStub(promise.promise).hook.ignoreUnhandledRejections());
+          promise => unwrapStubOrParent(promise.promise).ignoreUnhandledRejections());
     } else {
       // Ugh we have to walk the tree.
       this.ignoreUnhandledRejectionsImpl(this.value);
@@ -890,7 +1024,7 @@ export class RpcPayload {
 
       case "stub":
       case "rpc-promise":
-        unwrapStub(<RpcStub>value).hook.ignoreUnhandledRejections();
+        unwrapStubOrParent(<RpcStub>value).ignoreUnhandledRejections();
         return;
 
       case "rpc-thenable":
@@ -978,7 +1112,7 @@ function followPath(value: unknown, parent: object | undefined,
 
       case "stub":
       case "rpc-promise": {
-        let {hook: hook, pathIfPromise} = unwrapStub(<RpcStub>value);
+        let {hook: hook, pathIfPromise} = unwrapStubAndPath(<RpcStub>value);
         return { hook, remainingPath:
             pathIfPromise ? pathIfPromise.concat(path.slice(i)) : path.slice(i) };
       }
@@ -1126,6 +1260,19 @@ export class PayloadStubHook extends StubHook {
   }
 }
 
+function disposeRpcTarget(target: RpcTarget | Function) {
+  if (Symbol.dispose in target) {
+    try {
+      ((<Disposable><any>target)[Symbol.dispose])();
+    } catch (err) {
+      // We don't actually want to throw from dispose() as this will create trouble for
+      // the RPC state machine. Instead, treat the application's error as an unhandled
+      // rejection.
+      Promise.reject(err);
+    }
+  }
+}
+
 // Many TargetStubHooks could point at the same RpcTarget. We store a refcount in a separate
 // object that they all share.
 //
@@ -1244,7 +1391,7 @@ class TargetStubHook extends StubHook {
       // If the target is itself thenable, we allow it to be treated as a promise. This is used
       // in particular to support wrapping a workerd-native RpcPromise or RpcProperty.
       return Promise.resolve(target).then(resolution => {
-        return RpcPayload.fromApp(resolution);
+        return RpcPayload.fromAppReturn(resolution);
       });
     } else {
       // This shouldn't be called since RpcTarget always becomes RpcStub, not RpcPromise, and you
@@ -1261,16 +1408,7 @@ class TargetStubHook extends StubHook {
     if (this.target) {
       if (this.refcount) {
         if (--this.refcount.count == 0) {
-          if (Symbol.dispose in this.target) {
-            try {
-              ((<Disposable><any>this.target)[Symbol.dispose])();
-            } catch (err) {
-              // We don't actually want to throw from dispose() as this will create trouble for
-              // the RPC state machine. Instead, treat the application's error as an unhandled
-              // rejection.
-              Promise.reject(err);
-            }
-          }
+          disposeRpcTarget(this.target);
         }
       }
 
@@ -1301,6 +1439,11 @@ class PromiseStubHook extends StubHook {
     //   a call() that arrives just before. Keeping the promise around and always waiting on it
     //   avoids the problem.
     // TODO: Is there a way around this?
+
+    // Once call() returns (synchronously), we can no longer touch the original args. Since we
+    // can't serialize them yet, we have to deep-copy them now.
+    args.ensureDeepCopied();
+
     return new PromiseStubHook(this.promise.then(hook => hook.call(path, args)));
   }
 

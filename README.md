@@ -187,13 +187,24 @@ Stubs integrate with JavaScript's [explicit resource management](https://v8.dev/
 
 ### Automatic disposal
 
-This library implements several rules to help make resource management more manageable:
+This library implements several rules to help make resource management more manageable. These rules may appear a bit complicated, but are intended to implement the behavior you would naturally expect.
 
-* Disposing an `RpcPromise` will automatically dispose the future result. (It may also cause the promise to be canceled and rejected, though this is not guaranteed.)
-* When a stub is passed in the parameters or return value of an RPC, ownership is transferred to the recipient of that message. That means, the stub on the sending end is automatically disposed, but the receiving end receives a copy of the stub.
-    * Note, however, that `RpcPromise`s are NOT automatically disposed when used in an RPC message.
-* On the callee side of an RPC, any stubs received in the parameters will automatically be disposed when the call completes, if they have not been disposed before that. If you wish to keep the stubs beyond the return, you can `dup()` them (see below).
+The basic principle is: **The caller is responsible for disposing all stubs.** That is:
+* Stubs passed in the params of a call remain property of the caller, and must be disposed by the caller, not by the callee.
+* Stubs returned in the result of a call have their ownership transferred from the callee to the caller, and must be disposed by the caller.
+
+In practice, though, the callee and caller do not actually share the same stubs. When stubs are passed over RPC, they are _duplicated_, and the the target object is only disposed when all duplicates of the stub are disposed. Thus, to achieve the rule that only the caller needs to dispose stubs, the RPC system implicitly disposes the callee's duplicates of all stubs when the call completes. That is:
+* Any stubs the callee receives in the parameters are implciitly disposed when the call completes.
+* Any stubs returned in the results are implicitly disposed some time after the call completes. (Specifically, the RPC system will dispose them once it knows there will be no more pipelined calls.)
+
+Some additional wonky details:
+* Disposing an `RpcPromise` will automatically dispose the future result. (It may also cause the promise to be canceled and rejected, though this is not guaranteed.) If you don't intend to await an RPC promise, you should dispose it.
+* Passing an `RpcPromise` in params or the return value of a call has the same ownership / disposal rules as passing an `RpcStub`.
+* When you access a property of an `RpcStub` or `RpcPromise`, the result is itself an `RpcPromise`. However, this `RpcPromise` does not have its own disposer; you must dispose the stub or promise it came from. You can pass such properties in params or return values, but doing so will never lead to anything being implicitly disposed.
+* The caller of an RPC may dispose any stubs used in the parameters immediately after initiating the RPC, without waiting for the RPC to copmlete. All stubs are duplicated at the moment of the call, so the callee is not responsible for keeping them alive.
 * If the final result of an RPC returned to the caller is an object, it will always have a disposer. Disposing it will dispose all stubs found in that response. It's a good idea to always dispose return values even if you don't expect they contain any stubs, just in case the server changes the API in the future to add stubs to the result.
+
+WARNING: The ownership behavior of calls differs from the original behavior in the native RPC implementation built into the Cloudflare Workers Runtime. In the original Workers behavior, the callee loses ownership of stubs passed in a call's parameters. We plan to change the Workers Runtime to match Cap'n Web's behavior, as the original behavior has proven more problematic than helpful.
 
 ### Duplicating stubs
 
