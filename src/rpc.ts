@@ -183,6 +183,24 @@ class RpcImportHook extends StubHook {
     }
   }
 
+  map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook {
+    let entry: ImportTableEntry;
+    try {
+      entry = this.getEntry();
+    } catch (err) {
+      for (let cap of captures) {
+        cap.dispose();
+      }
+      throw err;
+    }
+
+    if (entry.resolution) {
+      return entry.resolution.map(path, captures, instructions);
+    } else {
+      return entry.session.sendMap(entry.importId, path, captures, instructions);
+    }
+  }
+
   get(path: PropertyPath): StubHook {
     let entry = this.getEntry();
     if (entry.resolution) {
@@ -492,7 +510,6 @@ class RpcSessionImpl implements Importer, Exporter {
     if (this.abortReason) throw this.abortReason;
 
     let value: Array<any> = ["pipeline", id, path];
-    let deferredDisposals: StubHook[] | undefined;
     if (args) {
       let devalue = Devaluator.devaluate(args.value, undefined, this, args);
 
@@ -505,9 +522,32 @@ class RpcSessionImpl implements Importer, Exporter {
     }
     this.send(["push", value]);
 
-    if (deferredDisposals) {
-      deferredDisposals?.forEach(d => d.dispose());
+    let entry = new ImportTableEntry(this, this.imports.length, false);
+    this.imports.push(entry);
+    return new RpcImportHook(/*isPromise=*/true, entry);
+  }
+
+  sendMap(id: ImportId, path: PropertyPath, captures: StubHook[], instructions: unknown[])
+      : RpcImportHook {
+    if (this.abortReason) {
+      for (let cap of captures) {
+        cap.dispose();
+      }
+      throw this.abortReason;
     }
+
+    let devaluedCaptures = captures.map(hook => {
+      let importId = this.getImport(hook);
+      if (importId !== undefined) {
+        return ["import", importId];
+      } else {
+        return ["export", this.exportStub(hook)];
+      }
+    });
+
+    let value = ["remap", id, path, devaluedCaptures, instructions];
+
+    this.send(["push", value]);
 
     let entry = new ImportTableEntry(this, this.imports.length, false);
     this.imports.push(entry);

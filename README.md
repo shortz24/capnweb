@@ -162,6 +162,45 @@ let profile = await api.getUserProfile(user.id);
 
 Whenever an `RpcPromise` is passed in the parameters to an RPC, or returned as part of the result, the promise will be replaced with its resolution before delivery to the receiving application. So, you can use an `RpcPromise<T>` anywhere where a `T` is required!
 
+### The magic `map()` method
+
+Every RPC promise has a special method `.map()` which can be used to remotely transform a value, without pulling it back locally. Here's an example:
+
+```ts
+// Get a list of user IDs.
+let idsPromise = api.listUserIds();
+
+// Look up the username for each one.
+let names = await idsPromise.map(id => [id, api.getUserName(id)]);
+```
+
+This example calls one API method to get a list of user IDs, then, for each user ID in the list, makes another RPC call to look up the user's name, producing a list of id/name pairs.
+
+**All this happens in a single network round trip!**
+
+`promise.map(func)` transfers a representation of `func` to the server, where it is executed on the promise's result. Specifically:
+
+* If the promise resolves to an array, the mapper function executes on each element of the array. The overall `.map()` operation returns a promise for an array of the results.
+* If the promise resolves to `null` or `undefined`, the map function is not executed at all. The result is the same value.
+* If the promise resolves to any other value, the map function executes once on that value, returning the result.
+
+Thus, `map()` can be used both for handling arrays, and for handling nullable values.
+
+There are some restrictions:
+
+* The callback must have no side effects other than calling RPCs.
+* The callback must be synchronous. It cannot await anything.
+* The input to the callback is an `RpcPromise`, hence the callback cannot actually operate on it, other than to invoke its RPC methods, or to use it in the params of other RPC methods.
+* Any stubs which you use in the callback -- and any parameters you pass to them -- will be sent to the peer. Be warned, a malicious peer can use these stubs for anything, not just calling your callback. Typically, it only makes sense to invoke stubs that came from the same peer originally, since this is what saves round-trips.
+
+**How the heck does that work?**
+
+Cap'n Web does NOT send arbitrary code over the wire!
+
+The trick here is record-replay: On the calling side, Cap'n Web will invoke your callback once, in a special "recording" mode, passing in a special placeholder stub which records what you do with it. During the invocation, any RPCs invoked by the callback (on *any* stub) will not actually be executed, but will be recorded as an action the callback performs. Any stubs you use during the recording are "captured" as well. Once the callback returns, the recording and the capture list can then be sent to the peer, where the recording can then be replayed as needed to process individual results.
+
+Since all of the not-yet-determined values seen by the callback are represented as `RpcPromise`s, the callback's behavior is deterministic. Any actual computation (arithmetic, branching, etc.) can't possibly use these promises as (meaningful) inputs, so would logically produce the same results for every invocation of the callback. Any such computation will actually end up being performed on the sending side, just once, with the results being imbued into the recording.
+
 ## Resource Management and Disposal
 
 Unfortunately, garbage collection does not work well when remote resources are involved, for two reasons:
