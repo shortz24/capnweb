@@ -1,4 +1,4 @@
-import { StubHook, RpcPayload, typeForRpc, RpcStub, RpcPromise, LocatedPromise, unwrapStub, RpcTarget, PropertyPath } from "./core.js";
+import { StubHook, RpcPayload, typeForRpc, RpcStub, RpcPromise, LocatedPromise, RpcTarget, PropertyPath, unwrapStubAndPath } from "./core.js";
 
 export type ImportId = number;
 export type ExportId = number;
@@ -45,8 +45,7 @@ const ERROR_TYPES: Record<string, any> = {
 // actually converting to a string. (The name is meant to be the opposite of "Evaluator", which
 // implements the opposite direction.)
 export class Devaluator {
-  private constructor(private exporter: Exporter,
-      private source: RpcPayload | undefined, private takeOwnership: boolean) {}
+  private constructor(private exporter: Exporter, private source: RpcPayload | undefined) {}
 
   // Devaluate the given value.
   // * value: The value to devaluate.
@@ -54,23 +53,14 @@ export class Devaluator {
   //     as a function.
   // * exporter: Callbacks to the RPC session for exporting capabilities found in this message.
   // * source: The RpcPayload which contains the value, and therefore owns stubs within.
-  // * takeOwnership: If true, then the RPC system is to take ownership of all stubs found in the
-  //     message, dismantling the payload (which should NOT be subsequently disposed). Otherwise,
-  //     stubs must be dup()ed.
   //
-  // Returns:
-  // * value: The devaluated value, ready to be JSON-serialized.
-  // * deferredDisposals: Contains hooks which should be disposed immediately after the
-  //     devaluated message has been sent.
-  public static devaluate(value: unknown, parent?: object, exporter: Exporter = NULL_EXPORTER,
-      source?: RpcPayload, takeOwnership: boolean = true)
-      : { value: unknown, deferredDisposals?: StubHook[] } {
-    let devaluator = new Devaluator(exporter, source, takeOwnership);
+  // Returns: The devaluated value, ready to be JSON-serialized.
+  public static devaluate(
+      value: unknown, parent?: object, exporter: Exporter = NULL_EXPORTER, source?: RpcPayload)
+      : unknown {
+    let devaluator = new Devaluator(exporter, source);
     try {
-      return {
-        value: devaluator.devaluateImpl(value, parent, 0),
-        deferredDisposals: devaluator.deferredDisposals,
-      };
+      return devaluator.devaluateImpl(value, parent, 0);
     } catch (err) {
       if (devaluator.exports) {
         try {
@@ -79,15 +69,11 @@ export class Devaluator {
           // probably a side effect of the original error, ignore it
         }
       }
-      if (devaluator.deferredDisposals) {
-        devaluator.deferredDisposals.forEach(d => d.dispose());
-      }
       throw err;
     }
   }
 
   private exports?: Array<ExportId>;
-  private deferredDisposals?: StubHook[];
 
   private devaluateImpl(value: unknown, parent: object | undefined, depth: number): unknown {
     if (depth >= 64) {
@@ -156,8 +142,28 @@ export class Devaluator {
           throw new Error("Can't serialize RPC stubs in this context.");
         }
 
-        let {hook, pathIfPromise} = unwrapStub(<RpcStub>value);
-        return this.devaluateHook(hook, pathIfPromise);
+        let {hook, pathIfPromise} = unwrapStubAndPath(<RpcStub>value);
+        let importId = this.exporter.getImport(hook);
+        if (importId !== undefined) {
+          if (pathIfPromise) {
+            // It's a promise pointing back to the peer, so we are doing pipelining here.
+            if (pathIfPromise.length > 0) {
+              return ["pipeline", importId, pathIfPromise];
+            } else {
+              return ["pipeline", importId];
+            }
+          } else {
+            return ["import", importId];
+          }
+        }
+
+        if (pathIfPromise) {
+          hook = hook.get(pathIfPromise);
+        } else {
+          hook = hook.dup();
+        }
+
+        return this.devaluateHook(pathIfPromise ? "promise" : "export", hook);
       }
 
       case "function":
@@ -167,7 +173,7 @@ export class Devaluator {
         }
 
         let hook = this.source.getHookForRpcTarget(<RpcTarget|Function>value, parent);
-        return this.devaluateHook(hook, undefined);
+        return this.devaluateHook("export", hook);
       }
 
       case "rpc-thenable": {
@@ -176,7 +182,7 @@ export class Devaluator {
         }
 
         let hook = this.source.getHookForRpcTarget(<RpcTarget>value, parent);
-        return this.devaluateHook(hook, []);
+        return this.devaluateHook("promise", hook);
       }
 
       default:
@@ -185,63 +191,17 @@ export class Devaluator {
     }
   }
 
-  private devaluateHook(hook: StubHook, pathIfPromise?: PropertyPath): unknown {
-    let importId = this.exporter.getImport(hook);
-    if (importId !== undefined) {
-      if (pathIfPromise) {
-        // It's a promise pointing back to the peer, so we are doing pipelining here.
-        if (pathIfPromise.length > 0) {
-          return ["pipeline", importId, pathIfPromise];
-        } else {
-          return ["pipeline", importId];
-        }
-      } else {
-        if (this.takeOwnership) {
-          if (!this.deferredDisposals) this.deferredDisposals = [];
-          this.deferredDisposals.push(hook);
-        }
-        return ["import", importId];
-      }
-    }
-
-    // OK, it wasn't an import, so we need to export the hook.
+  private devaluateHook(type: "export" | "promise", hook: StubHook): unknown {
     if (!this.exports) this.exports = [];
-    if (pathIfPromise) {
-      // This is a promise. If it was passed from the app, we are not supposed to take
-      // ownership of the hook.
-      if ((this.source && this.source.isFromApp()) || !this.takeOwnership) {
-        // Either this came directly from the app, so we are NOT supposed to take ownership of
-        // it, or we've been explicitly instructed not to take ownership, so we have to
-        // duplicate it (with get(), since it's a promise).
-        hook = hook.get(pathIfPromise);
-      } else {
-        // The payload has already been deep-copied so it's not exactly what came from the app.
-        // In that case, the deep-copy should have cloned this promise, and we may actually
-        // take ownership of the clone. But the clone should definitely have resulted in an
-        // empty path.
-        if (pathIfPromise.length > 0) {
-          throw new Error("RPC system bug: Unexpected uncloned promise in from-app payload.");
-        }
-      }
-
-      let exportId = this.exporter.exportPromise(hook);
-      this.exports.push(exportId);
-      return ["promise", exportId];
-    } else {
-      if (!this.takeOwnership) {
-        // We're not supposed to take ownership of stubs we see, so we have to dup them instead.
-        hook = hook.dup();
-      }
-
-      let exportId = this.exporter.exportStub(hook);
-      this.exports.push(exportId);
-      return ["export", exportId];
-    }
+    let exportId = type === "promise" ? this.exporter.exportPromise(hook)
+                                      : this.exporter.exportStub(hook);
+    this.exports.push(exportId);
+    return [type, exportId];
   }
 }
 
 export function serialize(value: unknown): string {
-  return JSON.stringify(Devaluator.devaluate(value).value);
+  return JSON.stringify(Devaluator.devaluate(value));
 }
 
 // =======================================================================================

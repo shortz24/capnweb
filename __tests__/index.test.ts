@@ -171,8 +171,8 @@ class TestHarness<T extends RpcTarget> {
   }
 
   checkAllDisposed() {
-    expect(this.client.getStats()).toStrictEqual({imports: 1, exports: 1});
-    expect(this.server.getStats()).toStrictEqual({imports: 1, exports: 1});
+    expect(this.client.getStats(), "client").toStrictEqual({imports: 1, exports: 1});
+    expect(this.server.getStats(), "server").toStrictEqual({imports: 1, exports: 1});
   }
 
   async [Symbol.asyncDispose]() {
@@ -547,13 +547,13 @@ describe("capability-passing", () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
 
-    let counter = await stub.makeCounter(4);
-    expect(await stub.incrementCounter(counter.dup())).toBe(5);
+    using counter = await stub.makeCounter(4);
+    expect(await stub.incrementCounter(counter)).toBe(5);
     expect(await stub.incrementCounter(counter, 4)).toBe(9);
   });
 
   it("supports three-party capability passing", async () => {
-    // Create two connections: Alice and Bob
+    // Create two parallel connections: Alice and Bob
     class AliceTarget extends RpcTarget {
       getCounter() {
         return new Counter(10);
@@ -580,6 +580,70 @@ describe("capability-passing", () => {
     let result = await bobStub.incrementCounter(counter, 3);
     expect(result).toBe(13);
   });
+
+  it("supports proxying", async () => {
+    // Create two connections in series: us -> Bob -> Alice
+    class AliceTarget extends RpcTarget {
+      getCounter(i: number) {
+        return new Counter(i);
+      }
+
+      incrementCounter(counter: RpcStub<Counter>, amount: number) {
+        return counter.increment(amount);
+      }
+    }
+
+    class BobTarget extends RpcTarget {
+      constructor(private alice: RpcStub<AliceTarget>) {
+        super();
+      }
+
+      async getCounter(i: number) {
+        return await this.alice.getCounter(i);
+      }
+
+      getCounterPromise(i: number) {
+        return this.alice.getCounter(i);
+      }
+
+      incrementCounter(counter: RpcStub<Counter>, amount: number) {
+        return this.alice.incrementCounter(counter, amount);
+      }
+    }
+
+    await using aliceHarness = new TestHarness(new AliceTarget());
+    await using bobHarness = new TestHarness(new BobTarget(aliceHarness.stub));
+
+    let bobStub = bobHarness.stub;
+
+    // Return capability through proxy.
+    {
+      using result = await bobStub.getCounter(4);
+      expect(await result.increment(2)).toBe(6)
+    }
+
+    // Return capability through proxy, pipeline.
+    {
+      using result = bobStub.getCounter(4);
+      expect(await result.increment(2)).toBe(6)
+    }
+
+    // Return promise through proxy.
+    {
+      using result = bobStub.getCounterPromise(4);
+      expect(await result.increment(2)).toBe(6)
+    }
+
+    // Send capability through proxy.
+    {
+      let counter = new Counter(10);
+
+      let result = await bobStub.incrementCounter(counter, 3);
+
+      expect(result).toBe(13);
+      expect(counter.increment(1)).toBe(14);
+    }
+  });
 });
 
 describe("promise pipelining", () => {
@@ -603,7 +667,7 @@ describe("promise pipelining", () => {
   it("supports returning a promise", async () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
-    expect(withoutDisposer(await stub.callSquare(stub.dup(), 3))).toStrictEqual({result: 9});
+    expect(withoutDisposer(await stub.callSquare(stub, 3))).toStrictEqual({result: 9});
   });
 
   it("propagates errors to pipelined calls", async () => {
@@ -676,10 +740,10 @@ describe("promise pipelining", () => {
 
 describe("stub disposal over RPC", () => {
   it("disposes remote RpcTarget when stub is disposed", async () => {
-    let targetDisposed = false;
+    let targetDisposedCount = 0;
     class DisposableTarget extends RpcTarget {
       getValue() { return 42; }
-      [Symbol.dispose]() { targetDisposed = true; }
+      [Symbol.dispose]() { ++targetDisposedCount; }
     }
 
     class MainTarget extends RpcTarget {
@@ -694,12 +758,75 @@ describe("stub disposal over RPC", () => {
     {
       using disposableStub = await mainStub.getDisposableTarget();
       expect(await disposableStub.getValue()).toBe(42);
+      expect(targetDisposedCount).toBe(0);
     } // disposer runs here
 
     // Wait a bit for the disposal message to be processed
     await pumpMicrotasks();
 
-    expect(targetDisposed).toBe(true);
+    expect(targetDisposedCount).toBe(1);
+  });
+
+  it("disposes a returned RpcTarget for every time it appears in a result", async () => {
+    let targetDisposedCount = 0;
+    class DisposableTarget extends RpcTarget {
+      getValue() { return 42; }
+      [Symbol.dispose]() { ++targetDisposedCount; }
+    }
+
+    class MainTarget extends RpcTarget {
+      getDisposableTarget() {
+        let result = new DisposableTarget();
+        return [result, result, result];
+      }
+    }
+
+    await using harness = new TestHarness(new MainTarget());
+    let mainStub = harness.stub as any;
+
+    {
+      using disposableStub = await mainStub.getDisposableTarget();
+      expect(await disposableStub[0].getValue()).toBe(42);
+      expect(await disposableStub[1].getValue()).toBe(42);
+      expect(await disposableStub[2].getValue()).toBe(42);
+
+      // The current implementation will actually call the disposer twice as soon as the pipeline
+      // is done, but the last call won't happen until the stubs are disposed.
+      expect(targetDisposedCount).toBeLessThan(3);
+    } // final disposer runs here
+
+    // Wait a bit for the disposal message to be processed
+    await pumpMicrotasks();
+
+    // Disposer is called three times.
+    expect(targetDisposedCount).toBe(3);
+  });
+
+  it("disposes RpcTarget that was passed in params", async () => {
+    let targetDisposedCount = 0;
+    class DisposableTarget extends RpcTarget {
+      getValue() { return 42; }
+      [Symbol.dispose]() { ++targetDisposedCount; }
+    }
+
+    class MainTarget extends RpcTarget {
+      useDisposableTarget(stub: RpcStub<DisposableTarget>) {
+        return stub.getValue();
+      }
+    }
+
+    await using harness = new TestHarness(new MainTarget());
+    let mainStub = harness.stub as any;
+
+    {
+      let result = await mainStub.useDisposableTarget(new DisposableTarget());
+      expect(result).toBe(42);
+    }
+
+    // Wait a bit for the disposal message to be processed
+    await pumpMicrotasks();
+
+    expect(targetDisposedCount).toBe(1);
   });
 
   it("only disposes remote target when all RPC dups are disposed", async () => {
