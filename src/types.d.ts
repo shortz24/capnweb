@@ -26,10 +26,12 @@ export type Serializable<T> =
       T extends Map<unknown, infer U> ? Serializable<U> : never
     >
   | Set<T extends Set<infer U> ? Serializable<U> : never>
+  | Array<T extends Array<infer U> ? Serializable<U> : never>
   | ReadonlyArray<T extends ReadonlyArray<infer U> ? Serializable<U> : never>
   | {
       [K in keyof T]: K extends number | string ? Serializable<T[K]> : never;
     }
+  | Promise<T extends Promise<infer U> ? Serializable<U> : never>
   // Special types
   | Stub<Stubable>
   // Serialized as stubs, see `Stubify`
@@ -82,7 +84,7 @@ type BaseType =
 // prettier-ignore
 export type Stubify<T> =
   T extends Stubable ? Stub<T>
-  : T extends Promise<T> ? Stubify<T>
+  : T extends Promise<infer U> ? Stubify<U>
   : T extends StubBase<any> ? T
   : T extends Map<infer K, infer V> ? Map<Stubify<K>, Stubify<V>>
   : T extends Set<infer V> ? Set<Stubify<V>>
@@ -113,9 +115,8 @@ type Unstubify<T> = UnstubifyInner<T> | Promise<UnstubifyInner<T>>
 
 type UnstubifyAll<A extends any[]> = { [I in keyof A]: Unstubify<A[I]> };
 
-// Utility type for adding `Provider`/`Disposable`s to `object` types only.
+// Utility type for adding `Disposable`s to `object` types only.
 // Note `unknown & T` is equivalent to `T`.
-type MaybeProvider<T> = T extends object ? Provider<T> : unknown;
 type MaybeDisposable<T> = T extends object ? Disposable : unknown;
 
 // Type for method return or property on an RPC interface.
@@ -128,7 +129,7 @@ type MaybeDisposable<T> = T extends object ? Disposable : unknown;
 // prettier-ignore
 type Result<R> =
   R extends Stubable ? Promise<Stub<R>> & Provider<R> & StubBase<R>
-  : R extends Serializable<R> ? Promise<Stubify<R> & MaybeDisposable<R>> & MaybeProvider<R> & StubBase<R>
+  : R extends Serializable<R> ? Promise<Stubify<R> & MaybeDisposable<R>> & Provider<R> & StubBase<R>
   : never;
 
 // Type for method or property on an RPC interface.
@@ -148,11 +149,18 @@ type MaybeCallableProvider<T> = T extends (...args: any[]) => any
 
 // Base type for all other types providing RPC-like interfaces.
 // Rewrites all methods/properties to be `MethodOrProperty`s, while preserving callable types.
-export type Provider<
-  T extends object,
-> = MaybeCallableProvider<T> & {
-  [K in Exclude<
-    keyof T,
-    symbol | keyof StubBase<never>
-  >]: MethodOrProperty<T[K]>;
-};
+export type Provider<T> = MaybeCallableProvider<T> &
+  (T extends Array<infer U>
+    ? {
+        [key: number]: MethodOrProperty<U>;
+      } & {
+        map<V>(callback: (elem: U) => V): Result<Array<V>>;
+      }
+    : {
+        [K in Exclude<
+          keyof T,
+          symbol | keyof StubBase<never>
+        >]: MethodOrProperty<T[K]>;
+      } & {
+        map<V>(callback: (value: NonNullable<T>) => V): Result<Array<V>>;
+      });

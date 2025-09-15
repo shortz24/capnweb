@@ -103,6 +103,25 @@ export function typeForRpc(value: unknown): TypeForRpc {
   }
 }
 
+function mapNotLoaded(): never {
+  throw new Error("RPC map() implementation was not loaded.");
+}
+
+// map() is implemented in `map.ts`. We can't import it here because it would create an import
+// cycle, so instead we define two hook functions that map.ts will overwrite when it is imported.
+export let mapImpl: MapImpl = { applyMap: mapNotLoaded, sendMap: mapNotLoaded };
+
+type MapImpl = {
+  // Applies a map function to an input value (usually an array).
+  applyMap(input: unknown, parent: object | undefined, owner: RpcPayload | null,
+           captures: StubHook[], instructions: unknown[])
+          : StubHook;
+
+  // Implements the .map() method of RpcStub.
+  sendMap(hook: StubHook, path: PropertyPath, func: (value: RpcPromise) => unknown)
+         : RpcPromise;
+}
+
 // Inner interface backing an RpcStub or RpcPromise.
 //
 // A hook may eventually resolve to a "payload".
@@ -114,6 +133,23 @@ export abstract class StubHook {
   // Call a function at the given property path with the given arguments. Returns a hook for the
   // promise for the result.
   abstract call(path: PropertyPath, args: RpcPayload): StubHook;
+
+  // Apply a map operation.
+  //
+  // `captures` is a list of external stubs which are used as part of the mapper function.
+  // NOTE: The callee takes ownership of `captures`.
+  //
+  // `instructions` is a JSON-serializable value describing the mapper function as a series of
+  // steps. Each step is an expression to evaluate, in the usual RPC expression format. The last
+  // instruction is the return value.
+  //
+  // Each instruction can refer to the results of any of the instructions before it, as well as to
+  // the captures, as if they were imports on the import table. In particular:
+  // * The value 0 is the input to the mapper function (e.g. one element of the array being mapped).
+  // * Positive values are 1-based indexes into the instruction table, representing the results of
+  //   previous instructions.
+  // * Negative values are -1-based indexes into the capture list.
+  abstract map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook;
 
   // Read the property at the given path. Returns a StubHook representing a promise for that
   // property. This behaves very similarly to call(), except that no actual function is invoked
@@ -174,6 +210,7 @@ export class ErrorStubHook extends StubHook {
   constructor(private error: any) { super(); }
 
   call(path: PropertyPath, args: RpcPayload): StubHook { return this; }
+  map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook { return this; }
   get(path: PropertyPath): StubHook { return this; }
   dup(): StubHook { return this; }
   pull(): RpcPayload | Promise<RpcPayload> { return Promise.reject(this.error); }
@@ -192,6 +229,23 @@ export class ErrorStubHook extends StubHook {
 const DISPOSED_HOOK: StubHook = new ErrorStubHook(
     new Error("Attempted to use RPC stub after it has been disposed."));
 
+// A call interceptor can be used to intercept all RPC stub invocations within some synchronous
+// scope. This is used to implement record/replay
+type CallInterceptor = (hook: StubHook, path: PropertyPath, params: RpcPayload) => StubHook;
+let doCall: CallInterceptor = (hook: StubHook, path: PropertyPath, params: RpcPayload) => {
+  return hook.call(path, params);
+}
+
+export function withCallInterceptor<T>(interceptor: CallInterceptor, callback: () => T): T {
+  let oldValue = doCall;
+  doCall = interceptor;
+  try {
+    return callback();
+  } finally {
+    doCall = oldValue;
+  }
+}
+
 // Private symbol which may be used to unwrap the real stub through the Proxy.
 let RAW_STUB = Symbol("realStub");
 
@@ -203,7 +257,7 @@ export interface RpcStub extends Disposable {
 const PROXY_HANDLERS: ProxyHandler<{raw: RpcStub}> = {
   apply(target: {raw: RpcStub}, thisArg: any, argumentsList: any[]) {
     let stub = target.raw;
-    return new RpcPromise(stub.hook.call(
+    return new RpcPromise(doCall(stub.hook,
         stub.pathIfPromise || [], RpcPayload.fromAppParams(argumentsList)), []);
   },
 
@@ -358,6 +412,11 @@ export class RpcStub extends RpcTarget {
 
   onRpcBroken(callback: (error: any) => void) {
     this[RAW_STUB].hook.onBroken(callback);
+  }
+
+  map(func: (value: RpcPromise) => unknown): RpcPromise {
+    let {hook, pathIfPromise} = this[RAW_STUB];
+    return mapImpl.sendMap(hook, pathIfPromise || [], func);
   }
 }
 
@@ -539,7 +598,7 @@ export class RpcPayload {
   // to have the sender and recipient end up sharing the same mutable object. `value` will not be
   // touched again after the call returns synchronously (returns a promise) -- by that point,
   // the value has either been copied or serialized to the wire.
-  public static fromAppParams(value: unknown) {
+  public static fromAppParams(value: unknown): RpcPayload {
     return new RpcPayload(value, "params");
   }
 
@@ -548,8 +607,40 @@ export class RpcPayload {
   // Unlike fromAppParams(), in this case the payload takes ownership of all stubs in `value`, and
   // may hold onto `value` for an arbitarily long time (e.g. to serve pipelined requests). It
   // will still avoid modifying `value` and will make a deep copy if it is delivered locally.
-  public static fromAppReturn(value: unknown) {
+  public static fromAppReturn(value: unknown): RpcPayload {
     return new RpcPayload(value, "return");
+  }
+
+  // Combine an array of payloads into a single payload whose value is an array. Ownership of all
+  // stubs is transferred from the inputs to the outputs, hence if the output is disposed, the
+  // inputs should not be. (In case of exception, nothing is disposed, though.)
+  public static fromArray(array: RpcPayload[]): RpcPayload {
+    let stubs: RpcStub[] = [];
+    let promises: LocatedPromise[] = [];
+
+    let resultArray: unknown[] = [];
+
+    for (let payload of array) {
+      payload.ensureDeepCopied();
+      for (let stub of payload.stubs!) {
+        stubs.push(stub);
+      }
+      for (let promise of payload.promises!) {
+        if (promise.parent === payload) {
+          // This promise is the root of the source payload. We need to reparent it to its proper
+          // location in the result array.
+          promise = {
+            parent: resultArray,
+            property: resultArray.length,
+            promise: promise.promise
+          };
+        }
+        promises.push(promise);
+      }
+      resultArray.push(payload.value);
+    }
+
+    return new RpcPayload(resultArray, "owned", stubs, promises);
   }
 
   // Create a payload from a value parsed off the wire using Evaluator.evaluate().
@@ -1142,6 +1233,13 @@ function followPath(value: unknown, parent: object | undefined,
     }
   }
 
+  // If we reached a promise, we actually want the caller to forward to the promise, not return
+  // the promise itself.
+  if (value instanceof RpcPromise) {
+    let {hook: hook, pathIfPromise} = unwrapStubAndPath(<RpcStub>value);
+    return { hook, remainingPath: pathIfPromise || [] };
+  }
+
   // We don't validate the final value itself because we don't know the intended use yet. If it's
   // for a call, any callable is valid. If it's for get(), then any serializable value is valid.
   return {
@@ -1192,6 +1290,31 @@ export class PayloadStubHook extends StubHook {
       return new PromiseStubHook(promise.then(payload => {
         return new PayloadStubHook(payload);
       }));
+    } catch (err) {
+      return new ErrorStubHook(err);
+    }
+  }
+
+  map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook {
+    try {
+      let followResult: FollowPathResult;
+      try {
+        let payload = this.getPayload();
+        followResult = followPath(payload.value, undefined, path, payload);
+      } catch (err) {
+        // Oops, we need to dispose the captures of which we took ownership.
+        for (let cap of captures) {
+          cap.dispose();
+        }
+        throw err;
+      }
+
+      if (followResult.hook) {
+        return followResult.hook.map(followResult.remainingPath, captures, instructions);
+      }
+
+      return mapImpl.applyMap(
+          followResult.value, followResult.parent, followResult.owner, captures, instructions);
     } catch (err) {
       return new ErrorStubHook(err);
     }
@@ -1350,6 +1473,31 @@ class TargetStubHook extends StubHook {
     }
   }
 
+  map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook {
+    try {
+      let followResult: FollowPathResult;
+      try {
+        let target = this.getTarget();
+        followResult = followPath(target, this.parent, path, null);
+      } catch (err) {
+        // Oops, we need to dispose the captures of which we took ownership.
+        for (let cap of captures) {
+          cap.dispose();
+        }
+        throw err;
+      }
+
+      if (followResult.hook) {
+        return followResult.hook.map(followResult.remainingPath, captures, instructions);
+      }
+
+      return mapImpl.applyMap(
+          followResult.value, followResult.parent, followResult.owner, captures, instructions);
+    } catch (err) {
+      return new ErrorStubHook(err);
+    }
+  }
+
   get(path: PropertyPath): StubHook {
     try {
       if (path.length == 0) {
@@ -1445,6 +1593,17 @@ class PromiseStubHook extends StubHook {
     args.ensureDeepCopied();
 
     return new PromiseStubHook(this.promise.then(hook => hook.call(path, args)));
+  }
+
+  map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook {
+    return new PromiseStubHook(this.promise.then(
+        hook => hook.map(path, captures, instructions),
+        err => {
+          for (let cap of captures) {
+            cap.dispose();
+          }
+          throw err;
+        }));
   }
 
   get(path: PropertyPath): StubHook {

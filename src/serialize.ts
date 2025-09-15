@@ -246,6 +246,11 @@ export class Evaluator {
     }
   }
 
+  // Evaluate the value without destroying it.
+  public evaluateCopy(value: unknown): RpcPayload {
+    return this.evaluate(structuredClone(value));
+  }
+
   private evaluateImpl(value: unknown, parent: object, property: string | number): unknown {
     if (value instanceof Array) {
       if (value.length == 1 && value[0] instanceof Array) {
@@ -278,7 +283,7 @@ export class Evaluator {
           break;
 
         case "import":
-        case "pipeline":
+        case "pipeline": {
           // It's an "import" from the perspective of the sender, so it's an export from our
           // side. In other words, the sender is passing our own object back to us.
 
@@ -355,6 +360,55 @@ export class Evaluator {
           args = subEval.evaluate([args]);
 
           return addStub(hook.call(path, args));
+        }
+
+        case "remap": {
+          if (value.length !== 5 ||
+              typeof value[1] !== "number" ||
+              !(value[2] instanceof Array) ||
+              !(value[3] instanceof Array) ||
+              !(value[4] instanceof Array)) {
+            break;   // report error below
+          }
+
+          let hook = this.importer.getExport(value[1]);
+          if (!hook) {
+            throw new Error(`no such entry on exports table: ${value[1]}`);
+          }
+
+          let path = value[2];
+          if (!path.every(
+              part => { return typeof part == "string" || typeof part == "number"; })) {
+            break;  // report error below
+          }
+
+          let captures: StubHook[] = value[3].map(cap => {
+            if (!(cap instanceof Array) ||
+                cap.length !== 2 ||
+                (cap[0] !== "import" && cap[0] !== "export") ||
+                typeof cap[1] !== "number") {
+              throw new TypeError(`unknown map capture: ${JSON.stringify(cap)}`);
+            }
+
+            if (cap[0] === "export") {
+              return this.importer.importStub(cap[1]);
+            } else {
+              let exp = this.importer.getExport(cap[1]);
+              if (!exp) {
+                throw new Error(`no such entry on exports table: ${cap[1]}`);
+              }
+              return exp.dup();
+            }
+          });
+
+          let instructions = value[4];
+
+          let resultHook = hook.map(path, captures, instructions);
+
+          let promise = new RpcPromise(resultHook, []);
+          this.promises.push({promise, parent, property});
+          return promise;
+        }
 
         case "export":
         case "promise":

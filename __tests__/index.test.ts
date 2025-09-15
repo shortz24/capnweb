@@ -307,6 +307,74 @@ describe("local stub", () => {
     expect(await stub.publicMethod()).toBe("public");
     await expect(() => (stub as any)["#privateMethod"]).rejects.toThrow("RPC object has no property '#privateMethod'");
   });
+
+  it("supports map() on nulls", async () => {
+    let counter = new RpcStub(new Counter(0));
+
+    let stub = new RpcStub(new TestTarget());
+
+    {
+      using promise = stub.returnNull();
+      expect(await promise.map(_ => counter.increment(123))).toBe(null);
+    }
+
+    {
+      using promise = stub.returnUndefined();
+      expect(await promise.map(_ => counter.increment(456))).toBe(undefined);
+    }
+
+    {
+      using promise = stub.returnNumber(2);
+      expect(await promise.map(i => counter.increment(i))).toBe(2);
+    }
+
+    {
+      using promise = stub.returnNumber(4);
+      expect(await promise.map(i => counter.increment(i))).toBe(6);
+    }
+  });
+
+  it("supports map() on arrays", async () => {
+    let outerCounter = new RpcStub(new Counter(0));
+    let stub = new RpcStub(new TestTarget());
+
+    using fib = stub.generateFibonacci(6);
+    using counters = await fib.map(i => {
+      let counter = stub.makeCounter(i);
+      let val = counter.increment(3);
+      outerCounter.increment();
+      return {counter, val};
+    });
+
+    expect(counters.map(x => x.val)).toStrictEqual([3, 4, 4, 5, 6, 8]);
+
+    expect(await Promise.all(counters.map(x => x.counter.value)))
+        .toStrictEqual([3, 4, 4, 5, 6, 8]);
+
+    expect(await outerCounter.value).toBe(6);
+  });
+
+  it("supports nested map()", async () => {
+    let stub = new RpcStub(new TestTarget());
+
+    let fib = stub.generateFibonacci(7);
+    let result = await fib.map(i => {
+      return stub.generateFibonacci(i).map(j => {
+        return stub.generateFibonacci(j);
+      });
+    });
+
+    expect(withoutDisposer(result)).toStrictEqual([
+      [],
+      [[]],
+      [[]],
+      [[], [0]],
+      [[], [0], [0]],
+      [[], [0], [0], [0, 1], [0, 1, 1]],
+      [[], [0], [0], [0, 1], [0, 1, 1], [0, 1, 1, 2, 3], [0, 1, 1, 2, 3, 5, 8, 13],
+          [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144]],
+    ]);
+  });
 });
 
 describe("stub disposal", () => {
@@ -735,6 +803,80 @@ describe("promise pipelining", () => {
 
     await expect(() => promise).rejects.toThrow("test error");
     await expect(() => promise2).rejects.toThrow("test error");
+  });
+});
+
+describe("map() over RPC", () => {
+  it("supports map() on nulls", async () => {
+    let counter = new RpcStub(new Counter(0));
+
+    await using harness = new TestHarness(new TestTarget());
+    let stub = harness.stub;
+
+    {
+      using promise = stub.returnNull();
+      expect(await promise.map(_ => counter.increment(123))).toBe(null);
+    }
+
+    {
+      using promise = stub.returnUndefined();
+      expect(await promise.map(_ => counter.increment(456))).toBe(undefined);
+    }
+
+    {
+      using promise = stub.returnNumber(2);
+      expect(await promise.map(i => counter.increment(i))).toBe(2);
+    }
+
+    {
+      using promise = stub.returnNumber(4);
+      expect(await promise.map(i => counter.increment(i))).toBe(6);
+    }
+  });
+
+  it("supports map() on arrays", async () => {
+    let outerCounter = new RpcStub(new Counter(0));
+
+    await using harness = new TestHarness(new TestTarget());
+    let stub = harness.stub;
+
+    using fib = stub.generateFibonacci(6);
+    using counters = await fib.map(i => {
+      let counter = stub.makeCounter(i);
+      let val = counter.increment(3);
+      outerCounter.increment();
+      return {counter, val};
+    });
+
+    expect(counters.map(x => x.val)).toStrictEqual([3, 4, 4, 5, 6, 8]);
+
+    expect(await Promise.all(counters.map(x => x.counter.value)))
+        .toStrictEqual([3, 4, 4, 5, 6, 8]);
+
+    expect(await outerCounter.value).toBe(6);
+  });
+
+  it("supports nested map()", async () => {
+    await using harness = new TestHarness(new TestTarget());
+    let stub = harness.stub;
+
+    using fib = stub.generateFibonacci(7);
+    using result = await fib.map(i => {
+      return stub.generateFibonacci(i).map(j => {
+        return stub.generateFibonacci(j);
+      });
+    });
+
+    expect(withoutDisposer(result)).toStrictEqual([
+      [],
+      [[]],
+      [[]],
+      [[], [0]],
+      [[], [0], [0]],
+      [[], [0], [0], [0, 1], [0, 1, 1]],
+      [[], [0], [0], [0, 1], [0, 1, 1], [0, 1, 1, 2, 3], [0, 1, 1, 2, 3, 5, 8, 13],
+          [0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144]],
+    ]);
   });
 });
 

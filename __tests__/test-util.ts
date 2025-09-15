@@ -11,6 +11,10 @@ export class Counter extends RpcTarget {
     this.i += amount;
     return this.i;
   }
+
+  get value() {
+    return this.i;
+  }
 }
 
 // Distinct function so we can search for it in the stack trace.
@@ -38,4 +42,20 @@ export class TestTarget extends RpcTarget {
   incrementCounter(c: RpcStub<Counter>, i: number = 1) {
     return c.increment(i);
   }
+
+  generateFibonacci(length: number) {
+    let result = [0, 1];
+    if (length <= result.length) return result.slice(0, length);
+
+    while (result.length < length) {
+      let next = result[result.length - 1] + result[result.length - 2];
+      result.push(next);
+    }
+
+    return result;
+  }
+
+  returnNull() { return null; }
+  returnUndefined() { return undefined; }
+  returnNumber(i: number) { return i; }
 }

@@ -7,6 +7,9 @@ import { newWebSocketRpcSession as newWebSocketRpcSessionImpl,
 import { newHttpBatchRpcSession as newHttpBatchRpcSessionImpl,
          newHttpBatchRpcResponse } from "./batch.js";
 import { newMessagePortRpcSession as newMessagePortRpcSessionImpl } from "./messageport.js";
+import { forceInitMap } from "./map.js";
+
+forceInitMap();
 
 // Re-export public API types.
 export { serialize, deserialize, newWorkersWebSocketRpcResponse, newHttpBatchRpcResponse };
@@ -18,7 +21,7 @@ export const RpcStub: {
   new <T extends Serializable<T>>(value: T): RpcStub<T>;
 } = <any>RpcStubImpl;
 
-export type RpcPromise<T extends Serializable<T>> = Stub<T> | Promise<Stubify<T>>;
+export type RpcPromise<T extends Serializable<T>> = Stub<T> & Promise<Stubify<T>>;
 export const RpcPromise: {
   // Note: Cannot construct directly!
 } = <any>RpcPromiseImpl;

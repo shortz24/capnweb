@@ -123,6 +123,23 @@ If the type is "import", the expression evaluates to a stub. If it is "pipeline"
 
 `callArguments` is also optional. If specified, then the given property should be called as a function. `callArguments` is an expression that evaluates to an array; these are the arguments to the call.
 
+`["remap", importId, propertyPath, captures, instructions]`
+
+Implements the `.map()` operation. (We call this "remap" so as not to confuse with the serialization of a `Map` object.)
+
+`importId` and `propertyPath` are the same as for the `"import"` operation. These identify the particular property which is to be mapped.
+
+`captures` and `instructions` define the mapper function which is to apply to the target value.
+
+`captures` defines the set of stubs which the mapper function has captured, in the sense of a lambda capture. The body of the function may call these stubs. The format of `captures` is an array, where each member of the array is either `["import", importId]` or `["export", exportId]`, which refer to an entry on the (sender's) import or export table, respectively.
+
+`instructions` contains a list of expressions which should be evaluated to execute the mapper function on a particular input value. Each instruction is an expression in the same format described in this doc, but with special handling of imports and exports. For the purpose of the instructions in a mapper, there is no export table. The import table, meanwhile, is defined as follows:
+* Negative values refer to the `captures` list, starting from -1. So, -1 is `captures[0]`, -2 is `captures[1]`, and so on.
+* Zero refers to the input value of the map function.
+* Positive values refer to the results of previous instructions, starting from 1. So, 1 is the result of evaluating `instructions[0]`, 2 is the result of evaluating `instructions[1]`, and so on.
+
+The instructions are always evaluated in order. Each instruction may only import results of instructions that came before it. The last instruction evaluates to the return value of the map function.
+
 `["export", exportId]`
 
 The sender is exporting a new stub (or re-exporting a stub that was exported before). The expression evaluates to a stub.
