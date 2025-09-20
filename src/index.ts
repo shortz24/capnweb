@@ -50,7 +50,7 @@ interface Empty {}
 
 export let newWebSocketRpcSession:
     <T extends Serializable<T> = Empty>
-    (webSocket: WebSocket | string, localMain?: any) => Stubify<T> =
+    (webSocket: WebSocket | string, localMain?: any, options?: RpcSessionOptions) => Stubify<T> =
     <any>newWebSocketRpcSessionImpl;
 
 export let newHttpBatchRpcSession:
