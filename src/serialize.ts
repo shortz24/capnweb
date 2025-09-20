@@ -83,8 +83,15 @@ export class Devaluator {
 
     let kind = typeForRpc(value);
     switch (kind) {
-      case "unsupported":
-        throw new TypeError("cannot serialize: " + value);
+      case "unsupported": {
+        let msg;
+        try {
+          msg = `Cannot serialize value: ${value}`;
+        } catch (err) {
+          msg = "Cannot serialize value: (couldn't stringify value)";
+        }
+        throw new TypeError(msg);
+      }
 
       case "primitive":
         // Supported directly by JSON.

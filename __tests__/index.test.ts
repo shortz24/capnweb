@@ -49,7 +49,11 @@ describe("simple serialization", () => {
 
   it("throws an error if the value can't be serialized", () => {
     expect(() => serialize(new NotSerializable(123))).toThrowError(
-      new TypeError("cannot serialize: NotSerializable(123)")
+      new TypeError("Cannot serialize value: NotSerializable(123)")
+    );
+
+    expect(() => serialize(Object.create(null))).toThrowError(
+      new TypeError("Cannot serialize value: (couldn't stringify value)")
     );
   })
 
@@ -526,7 +530,7 @@ describe("basic rpc", () => {
     let stub = harness.stub;
 
     expect(() => stub.square(new NotSerializable(123) as any)).toThrow(
-      new TypeError("cannot serialize: NotSerializable(123)")
+      new TypeError("Cannot serialize value: NotSerializable(123)")
     );
   });
 
@@ -541,7 +545,7 @@ describe("basic rpc", () => {
     let stub = harness.stub as any;
 
     await expect(() => stub.returnNonSerializable()).rejects.toThrow(
-      new TypeError("cannot serialize: NotSerializable(456)")
+      new TypeError("Cannot serialize value: NotSerializable(456)")
     );
   });
 
