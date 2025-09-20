@@ -104,7 +104,8 @@ The following types are not supported as of this writing, but may be added in th
 * `Map` and `Set`
 * `ArrayBuffer` and typed arrays other than `Uint8Array`
 * `RegExp`
-* `Headers`
+* `ReadableStream` and `WritableStream`, with automatic flow control.
+* `Headers`, `Request`, and `Response`
 
 The following are intentionally NOT supported:
 * Application-defined classes that do not extend `RpcTarget`.
