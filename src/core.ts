@@ -1182,7 +1182,13 @@ function followPath(value: unknown, parent: object | undefined,
     parent = <object>value;
 
     let part = path[i];
-    if (part === "__proto__" || part === "constructor") {
+    if (part in Object.prototype) {
+      // Don't allow messing with Object.prototype properties over RPC. We block these even if
+      // the specific object has overridden them for consistency with the deserialization code,
+      // which will refuse to deserialize an object containing such properties. Anyway, it's
+      // impossible for a normal client to even request these because accessing Object prototype
+      // properties on a stub will resolve to the local prototype property, not making an RPC at
+      // all.
       throwPathError(path, i);
     }
 

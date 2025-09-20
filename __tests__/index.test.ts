@@ -574,14 +574,22 @@ describe("basic rpc", () => {
   it("does not expose common Object properties on RpcTarget", async () => {
     class ObjectVendor extends RpcTarget {
       get() {
-        return new RpcStub<object>({foo: 123, arr: [1, 2], func(x: number) { return 123; }});
+        return new RpcStub<object>({
+          foo: 123,
+          arr: [1, 2],
+          func(x: any) { return `${x}`; },
+          toString() { return "special string"; }
+        });
       }
     }
 
-    await using harness = new TestHarness(new ObjectVendor());
+    await using harness = new TestHarness(new ObjectVendor(), {
+      onSendError(err) { return err; }
+    });
     using stub: any = await harness.stub.get();
 
     expect(await stub.foo).toBe(123);
+    expect(await stub.func(321)).toBe("321");
 
     // Similar to previous test case, but we're operating on a stub backed by an object rather
     // than an RpcTarget now.
@@ -598,6 +606,10 @@ describe("basic rpc", () => {
     // Special properties are not exposed.
     await expect(() => stub.$remove$__proto__).rejects.toThrow("RPC object has no property '__proto__'");
     await expect(() => stub.$remove$constructor).rejects.toThrow("RPC object has no property 'constructor'");
+
+    expect(await stub.func({})).toBe("[object Object]");
+    expect(await stub.func({$remove$toString: "bad"})).toBe("[object Object]");
+    expect(await stub.func({$remove$__proto__: {toString: "bad"}})).toBe("[object Object]");
   });
 });
 

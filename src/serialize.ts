@@ -446,7 +446,15 @@ export class Evaluator {
     } else if (value instanceof Object) {
       let result = <Record<string, unknown>>value;
       for (let key in result) {
-        result[key] = this.evaluateImpl(result[key], result, key);
+        if (key in Object.prototype) {
+          // Out of an abundance of caution, we will ignore properties that override properties
+          // of Object.prototype. It's especially important that we don't allow `__proto__` as it
+          // may lead to prototype pollution. We also would rather not allow, e.g., `toString()`,
+          // as overriding this could lead to various mischief.
+          delete result[key];
+        } else {
+          result[key] = this.evaluateImpl(result[key], result, key);
+        }
       }
       return result;
     } else {
