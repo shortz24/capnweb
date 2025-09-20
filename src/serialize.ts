@@ -446,11 +446,18 @@ export class Evaluator {
     } else if (value instanceof Object) {
       let result = <Record<string, unknown>>value;
       for (let key in result) {
-        if (key in Object.prototype) {
+        if (key in Object.prototype || key === "toJSON") {
           // Out of an abundance of caution, we will ignore properties that override properties
           // of Object.prototype. It's especially important that we don't allow `__proto__` as it
           // may lead to prototype pollution. We also would rather not allow, e.g., `toString()`,
           // as overriding this could lead to various mischief.
+          //
+          // We also block `toJSON()` for similar reasons -- even though Object.prototype doesn't
+          // actually define it, `JSON.stringify()` treats it specially and we don't want someone
+          // snooping on JSON calls.
+          //
+          // We do still evaluate the inner value so that we can properly release any stubs.
+          this.evaluateImpl(result[key], result, key);
           delete result[key];
         } else {
           result[key] = this.evaluateImpl(result[key], result, key);

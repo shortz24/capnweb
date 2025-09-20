@@ -578,6 +578,7 @@ describe("basic rpc", () => {
           foo: 123,
           arr: [1, 2],
           func(x: any) { return `${x}`; },
+          jsonify(x: any) { return JSON.stringify(x); },
           toString() { return "special string"; }
         });
       }
@@ -610,6 +611,8 @@ describe("basic rpc", () => {
     expect(await stub.func({})).toBe("[object Object]");
     expect(await stub.func({$remove$toString: "bad"})).toBe("[object Object]");
     expect(await stub.func({$remove$__proto__: {toString: "bad"}})).toBe("[object Object]");
+
+    expect(await stub.jsonify({x: 123, $remove$toJSON: () => "bad"})).toBe('{"x":123}');
   });
 });
 
