@@ -40,6 +40,22 @@ const ERROR_TYPES: Record<string, any> = {
   // TODO: DOMError? Others?
 };
 
+// Polyfill type for UInt8Array.toBase64(), which has started landing in JS runtimes but is not
+// supported everywhere just yet.
+interface Uint8Array {
+  toBase64?(options?: {
+    alphabet?: "base64" | "base64url",
+    omitPadding?: boolean
+  }): string;
+};
+
+interface FromBase64 {
+  fromBase64?(text: string, options?: {
+    alphabet?: "base64" | "base64url",
+    lastChunkHandling?: "loose" | "strict" | "stop-before-partial"
+  }): Uint8Array;
+}
+
 // Converts fully-hydrated messages into object trees that are JSON-serializable for sending over
 // the wire. This is used to implement serialization -- but it doesn't take the last step of
 // actually converting to a string. (The name is meant to be the opposite of "Evaluator", which
@@ -122,6 +138,16 @@ export class Devaluator {
 
       case "date":
         return ["date", (<Date>value).getTime()];
+
+      case "bytes": {
+        let bytes = value as Uint8Array;
+        if (bytes.toBase64) {
+          return ["bytes", bytes.toBase64({omitPadding: true})];
+        } else {
+          return ["bytes",
+              btoa(String.fromCharCode.apply(null, bytes as number[]).replace(/=*$/, ""))];
+        }
+      }
 
       case "error": {
         let e = <Error>value;
@@ -281,6 +307,23 @@ export class Evaluator {
             return new Date(value[1]);
           }
           break;
+        case "bytes": {
+          let b64 = Uint8Array as FromBase64;
+          if (typeof value[1] == "string") {
+            if (b64.fromBase64) {
+              return b64.fromBase64(value[1]);
+            } else {
+              let bs = atob(value[1]);
+              let len = bs.length;
+              let bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = bs.charCodeAt(i);
+              }
+              return bytes;
+            }
+          }
+          break;
+        }
         case "error":
           if (value.length >= 3 && typeof value[1] === "string" && typeof value[2] === "string") {
             let cls = ERROR_TYPES[value[1]] || Error;

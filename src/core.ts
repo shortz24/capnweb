@@ -23,7 +23,8 @@ export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
 export type PropertyPath = (string | number)[];
 
 type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
-    "bigint" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" | "undefined";
+    "bigint" | "bytes" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" |
+    "undefined";
 
 export function typeForRpc(value: unknown): TypeForRpc {
   switch (typeof value) {
@@ -68,6 +69,9 @@ export function typeForRpc(value: unknown): TypeForRpc {
 
     case Date.prototype:
       return "date";
+
+    case Uint8Array.prototype:
+      return "bytes";
 
     // TODO: All other structured clone types.
 
@@ -758,6 +762,7 @@ export class RpcPayload {
       case "primitive":
       case "bigint":
       case "date":
+      case "bytes":
       case "error":
       case "undefined":
         // immutable, no need to copy
@@ -1024,6 +1029,7 @@ export class RpcPayload {
       case "unsupported":
       case "primitive":
       case "bigint":
+      case "bytes":
       case "date":
       case "error":
       case "undefined":
@@ -1109,6 +1115,7 @@ export class RpcPayload {
       case "unsupported":
       case "primitive":
       case "bigint":
+      case "bytes":
       case "date":
       case "error":
       case "undefined":
@@ -1236,6 +1243,7 @@ function followPath(value: unknown, parent: object | undefined,
 
       case "primitive":
       case "bigint":
+      case "bytes":
       case "date":
       case "error":
       case "undefined":

@@ -19,6 +19,7 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
 
   '["bigint","123"]': 123n,
   '["date",1234]': new Date(1234),
+  '["bytes","aGVsbG8h"]': new TextEncoder().encode("hello!"),
   '["undefined"]': undefined,
   '["error","Error","the message"]': new Error("the message"),
   '["error","TypeError","the message"]': new TypeError("the message"),

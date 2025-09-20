@@ -97,11 +97,12 @@ The following types can be passed over RPC (in arguments or return values), and 
 * Arrays
 * `bigint`
 * `Date`
+* `Uint8Array`
 * `Error` and its well-known subclasses
 
-The following types are not supported as of this writing, but will be supported soon:
+The following types are not supported as of this writing, but may be added in the future:
 * `Map` and `Set`
-* `ArrayBuffer` and typed arrays
+* `ArrayBuffer` and typed arrays other than `Uint8Array`
 * `RegExp`
 * `Headers`
 
