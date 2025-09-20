@@ -131,11 +131,6 @@ class TestTransport implements RpcTransport {
   }
 }
 
-function withoutDisposer(obj: any) {
-  delete obj[Symbol.dispose];
-  return obj;
-}
-
 // Spin the microtask queue a bit to give messages time to be delivered and handled.
 async function pumpMicrotasks() {
   for (let i = 0; i < 16; i++) {
@@ -364,7 +359,7 @@ describe("local stub", () => {
       });
     });
 
-    expect(withoutDisposer(result)).toStrictEqual([
+    expect(result).toStrictEqual([
       [],
       [[]],
       [[]],
@@ -735,7 +730,7 @@ describe("promise pipelining", () => {
   it("supports returning a promise", async () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
-    expect(withoutDisposer(await stub.callSquare(stub, 3))).toStrictEqual({result: 9});
+    expect(await stub.callSquare(stub, 3)).toStrictEqual({result: 9});
   });
 
   it("propagates errors to pipelined calls", async () => {
@@ -867,7 +862,7 @@ describe("map() over RPC", () => {
       });
     });
 
-    expect(withoutDisposer(result)).toStrictEqual([
+    expect(result).toStrictEqual([
       [],
       [[]],
       [[]],
