@@ -117,6 +117,9 @@ export class Devaluator {
         return [result];
       }
 
+      case "bigint":
+        return ["bigint", (<bigint>value).toString()];
+
       case "date":
         return ["date", (<Date>value).getTime()];
 
@@ -268,6 +271,11 @@ export class Evaluator {
         }
         return result;
       } else switch (value[0]) {
+        case "bigint":
+          if (typeof value[1] == "string") {
+            return BigInt(value[1]);
+          }
+          break;
         case "date":
           if (typeof value[1] == "number") {
             return new Date(value[1]);

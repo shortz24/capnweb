@@ -23,7 +23,7 @@ export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
 export type PropertyPath = (string | number)[];
 
 type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
-    "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" | "undefined";
+    "bigint" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" | "undefined";
 
 export function typeForRpc(value: unknown): TypeForRpc {
   switch (typeof value) {
@@ -39,6 +39,9 @@ export function typeForRpc(value: unknown): TypeForRpc {
     case "function":
       // Test by prototype, below.
       break;
+
+    case "bigint":
+      return "bigint";
 
     default:
       return "unsupported";
@@ -753,6 +756,7 @@ export class RpcPayload {
         return value;
 
       case "primitive":
+      case "bigint":
       case "date":
       case "error":
       case "undefined":
@@ -1019,6 +1023,7 @@ export class RpcPayload {
     switch (kind) {
       case "unsupported":
       case "primitive":
+      case "bigint":
       case "date":
       case "error":
       case "undefined":
@@ -1103,6 +1108,7 @@ export class RpcPayload {
     switch (kind) {
       case "unsupported":
       case "primitive":
+      case "bigint":
       case "date":
       case "error":
       case "undefined":
@@ -1229,6 +1235,7 @@ function followPath(value: unknown, parent: object | undefined,
       }
 
       case "primitive":
+      case "bigint":
       case "date":
       case "error":
       case "undefined":

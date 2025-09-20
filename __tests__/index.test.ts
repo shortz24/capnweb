@@ -17,6 +17,7 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '{"foo":[[123]]}': {foo: [123]},
   '{"foo":[[123]],"bar":[[456,789]]}': {foo: [123], bar: [456, 789]},
 
+  '["bigint","123"]': 123n,
   '["date",1234]': new Date(1234),
   '["undefined"]': undefined,
   '["error","Error","the message"]': new Error("the message"),

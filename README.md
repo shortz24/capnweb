@@ -95,6 +95,7 @@ The following types can be passed over RPC (in arguments or return values), and 
 * Primitive values: strings, numbers, booleans, null, undefined
 * Plain objects (e.g., from object literals)
 * Arrays
+* `bigint`
 * `Date`
 * `Error` and its well-known subclasses
 
@@ -102,7 +103,6 @@ The following types are not supported as of this writing, but will be supported 
 * `Map` and `Set`
 * `ArrayBuffer` and typed arrays
 * `RegExp`
-* `BigInt`
 * `Headers`
 
 The following are intentionally NOT supported:
