@@ -1180,15 +1180,6 @@ type FollowPathResult = {
   owner?: never,
 };
 
-function throwPathError(path: PropertyPath, i: number): never {
-  if (i === 0) {
-    throw new TypeError(`RPC object has no property '${path[i]}'`);
-  } else {
-    let subPath = path.slice(0, i).join(".");
-    throw new TypeError(`'${subPath}' has no property '${path[i]}'`);
-  }
-}
-
 function followPath(value: unknown, parent: object | undefined,
                     path: PropertyPath, owner: RpcPayload | null): FollowPathResult {
   for (let i = 0; i < path.length; i++) {
@@ -1202,7 +1193,8 @@ function followPath(value: unknown, parent: object | undefined,
       // impossible for a normal client to even request these because accessing Object prototype
       // properties on a stub will resolve to the local prototype property, not making an RPC at
       // all.
-      throwPathError(path, i);
+      value = undefined;
+      continue;
     }
 
     let kind = typeForRpc(value);
@@ -1210,30 +1202,30 @@ function followPath(value: unknown, parent: object | undefined,
       case "object":
       case "function":
         // Must be own property, NOT inherited from a prototype.
-        if (!Object.hasOwn(<object>value, part)) {
-          throwPathError(path, i);
+        if (Object.hasOwn(<object>value, part)) {
+          value = (<any>value)[part];
+        } else {
+          value = undefined;
         }
-        value = (<any>value)[part];
         break;
 
       case "array":
         // For arrays, restricrt specifically to numeric indexes, to be consistent with
         // serialization, which only sends a flat list.
-        if (!Number.isInteger(part) || <number>part < 0) {
-          throwPathError(path, i);
+        if (Number.isInteger(part) && <number>part >= 0) {
+          value = (<any>value)[part];
+        } else {
+          value = undefined;
         }
-        value = (<any>value)[part];
         break;
 
       case "rpc-target":
       case "rpc-thenable": {
         // Must be prototype property, and must NOT be inherited from `Object`.
         if (Object.hasOwn(<object>value, part)) {
-          throwPathError(path, i);
-        }
-        value = (<any>value)[part];
-        if (!value || value === (<any>Object.prototype)[part]) {
-          throwPathError(path, i);
+          value = undefined;
+        } else {
+          value = (<any>value)[part];
         }
 
         // Since we're descending into the RpcTarget, the rest of the path is not "owned" by any
@@ -1254,9 +1246,14 @@ function followPath(value: unknown, parent: object | undefined,
       case "bytes":
       case "date":
       case "error":
-      case "undefined":
         // These have no properties that can be accessed remotely.
-        throwPathError(path, i);
+        value = undefined;
+        break;
+
+      case "undefined":
+        // Intentionally produce TypeError.
+        value = (value as any)[part];
+        break;
 
       case "unsupported": {
         if (i === 0) {

@@ -265,14 +265,20 @@ describe("local stub", () => {
     expect(await outerStub.innerTarget.square(3)).toBe(9);
   });
 
-  it("throws error when accessing non-existent properties", async () => {
+  it("returns undefined when accessing non-existent properties", async () => {
     let objectStub = new RpcStub({foo: "bar"});
     let arrayStub = new RpcStub([1, 2, 3]);
     let targetStub = new RpcStub(new TestTarget());
 
-    await expect(() => (objectStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
-    await expect(() => (arrayStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
-    await expect(() => (targetStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
+    expect(await (objectStub as any).nonExistent).toBe(undefined);
+    expect(await (arrayStub as any).nonExistent).toBe(undefined);
+    expect(await (targetStub as any).nonExistent).toBe(undefined);
+
+    // Accessing a property of undefined should throw TypeError (but the error message differs
+    // across runtimes).
+    await expect(() => (objectStub as any).nonExistent.foo).rejects.toThrow(TypeError);
+    await expect(() => (arrayStub as any).nonExistent.foo).rejects.toThrow(TypeError);
+    await expect(() => (targetStub as any).nonExistent.foo).rejects.toThrow(TypeError);
   });
 
   it("exposes only prototype properties for RpcTarget, not instance properties", async () => {
@@ -294,8 +300,8 @@ describe("local stub", () => {
 
     expect(await stub.prototypeProp).toBe("prototype");
     expect(await stub.prototypeMethod()).toBe("method");
-    await expect(() => (stub as any).instanceProp).rejects.toThrow("RPC object has no property 'instanceProp'");
-    await expect(() => (stub as any).dynamicProp).rejects.toThrow("RPC object has no property 'dynamicProp'");
+    expect(await (stub as any).instanceProp).toBe(undefined);
+    expect(await (stub as any).dynamicProp).toBe(undefined);
   });
 
   it("does not expose private methods starting with #", async () => {
@@ -306,7 +312,7 @@ describe("local stub", () => {
 
     let stub = new RpcStub(new TargetWithPrivate());
     expect(await stub.publicMethod()).toBe("public");
-    await expect(() => (stub as any)["#privateMethod"]).rejects.toThrow("RPC object has no property '#privateMethod'");
+    expect(await (stub as any)["#privateMethod"]).toBe(undefined);
   });
 
   it("supports map() on nulls", async () => {
@@ -565,12 +571,12 @@ describe("basic rpc", () => {
     // a common object property.
 
     // Properties of Object.prototype should not be exposed over RPC.
-    await expect(() => stub.$remove$toString).rejects.toThrow("RPC object has no property 'toString'");
-    await expect(() => stub.$remove$hasOwnProperty).rejects.toThrow("RPC object has no property 'hasOwnProperty'");
+    expect(await stub.$remove$toString).toBe(undefined);
+    expect(await stub.$remove$hasOwnProperty).toBe(undefined);
 
     // Special properties are not exposed.
-    await expect(() => stub.$remove$__proto__).rejects.toThrow("RPC object has no property '__proto__'");
-    await expect(() => stub.$remove$constructor).rejects.toThrow("RPC object has no property 'constructor'");
+    expect(await stub.$remove$__proto__).toBe(undefined);
+    expect(await stub.$remove$constructor).toBe(undefined);
   });
 
   it("does not expose common Object properties on RpcTarget", async () => {
@@ -598,17 +604,17 @@ describe("basic rpc", () => {
     // than an RpcTarget now.
 
     // Properties of Object.prototype should not be exposed over RPC.
-    await expect(() => stub.$remove$toString).rejects.toThrow("RPC object has no property 'toString'");
-    await expect(() => stub.$remove$hasOwnProperty).rejects.toThrow("RPC object has no property 'hasOwnProperty'");
+    expect(await stub.$remove$toString).toBe(undefined);
+    expect(await stub.$remove$hasOwnProperty).toBe(undefined);
 
     // Properties of Array.prototype and Function.prototype are similarly not exposed even for
     // values of those types.
-    await expect(() => stub.arr.$remove$map).rejects.toThrow("'arr' has no property 'map'");
-    await expect(() => stub.func.$remove$call).rejects.toThrow("RPC object has no property 'call'");
+    expect(await stub.arr.$remove$map).toBe(undefined);
+    expect(await stub.func.$remove$call).toBe(undefined);
 
     // Special properties are not exposed.
-    await expect(() => stub.$remove$__proto__).rejects.toThrow("RPC object has no property '__proto__'");
-    await expect(() => stub.$remove$constructor).rejects.toThrow("RPC object has no property 'constructor'");
+    expect(await stub.$remove$__proto__).toBe(undefined);
+    expect(await stub.$remove$constructor).toBe(undefined);
 
     expect(await stub.func({})).toBe("[object Object]");
     expect(await stub.func({$remove$toString: "bad"})).toBe("[object Object]");
