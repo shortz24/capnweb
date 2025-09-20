@@ -496,7 +496,9 @@ class RpcSessionImpl implements Importer, Exporter {
     try {
       msgText = JSON.stringify(msg);
     } catch (err) {
-      // TODO: rollback refcounts
+      // If JSON stringification failed, there's something wrong with the devaluator, as it should
+      // not allow non-JSONable values to be injected in the first place.
+      try { this.abort(err); } catch (err2) {}
       throw err;
     }
 
