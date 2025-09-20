@@ -1208,10 +1208,18 @@ function followPath(value: unknown, parent: object | undefined,
     let kind = typeForRpc(value);
     switch (kind) {
       case "object":
-      case "array":
       case "function":
         // Must be own property, NOT inherited from a prototype.
         if (!Object.hasOwn(<object>value, part)) {
+          throwPathError(path, i);
+        }
+        value = (<any>value)[part];
+        break;
+
+      case "array":
+        // For arrays, restricrt specifically to numeric indexes, to be consistent with
+        // serialization, which only sends a flat list.
+        if (!Number.isInteger(part) || <number>part < 0) {
           throwPathError(path, i);
         }
         value = (<any>value)[part];
