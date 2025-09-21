@@ -236,6 +236,10 @@ export class Devaluator {
   }
 }
 
+/**
+ * Serialize a value, using Cap'n Web's underlying serialization. This won't be able to serialize
+ * RPC stubs, but it will support basic data types.
+ */
 export function serialize(value: unknown): string {
   return JSON.stringify(Devaluator.devaluate(value));
 }
@@ -522,6 +526,9 @@ export class Evaluator {
   }
 }
 
+/**
+ * Deserialize a value serialized using serialize().
+ */
 export function deserialize(value: string): unknown {
   let payload = new Evaluator(NULL_IMPORTER).evaluate(JSON.parse(value));
   payload.dispose();  // should be no-op but just in case

@@ -1,91 +1,183 @@
 # Cap'n Web: A JavaScript-native RPC system
 
-This is a JavaScript/TypeScript RPC library that supports:
+Cap'n Web is a spiritual sibling to [Cap'n Proto](https://capnproto.org) (and is created by the same author), but designed to play nice in the web stack. That means:
+* Like Cap'n Proto, it is an object-capability protocol. ("Cap'n" is short for "capabilities and".) We'll get into this more below, but it's incredibly powerful.
+* Unlike Cap'n Proto, Cap'n Web has no schemas. In fact, it has almost no boilerplate whatsoever. This means it works more like the [JavaScript-native RPC system in Cloudflare Workers](https://blog.cloudflare.com/javascript-native-rpc/).
+* That said, it integrates nicely with TypeScript.
+* Also unlike Cap'n Proto, Cap'n Web's underlying serialization is human-readable. In fact, it's just JSON, with a little pre-/post-processing.
+* It works over HTTP, WebSocket, and postMessage() out-of-the-box, with the ability to extend it to other transports easily.
+* It works in all major browsers, Cloudflare Workers, Node.js, and other modern JavaScript runtimes.
+The whole thing compresses (minify+gzip) to under 10kB with no dependencies.
 
-* Usage from both browsers and servers.
-* Object Capabilities (pass-by-reference objects and functions), to model complex stateful interactions.
-* Promise Pipelining, so you can take the results of one call and send them in the arguments to the next call without actually waiting for the first call to return.
-* Batch requests over HTTP *or* long-lived sessions over WebSocket.
-* Absolutely minimal boilerplate.
+Cap'n Web is more expressive than almost every other RPC system, because it implements an object-capability RPC model. That means it:
+* Supports bidirectional calling. The client can call the server, and the server can also call the client.
+* Supports passing functions by reference: If you pass a function over RPC, the recipient receives a "stub". When they call the stub, they actually make an RPC back to you, invoking the function where it was created. This is how bidirectional calling happens: the client passes a callback to the server, and then the server can call it later.
+* Similarly, supports passing objects by reference: If a class extends the special marker type `RpcTarget`, then instances of that class are passed by reference, with method calls calling back to the location where the object was created.
+* Supports promise pipelining. When you start an RPC, you get back a promise. Instead of awaiting it, you can immediately use the promise in dependent RPCs, thus performing a chain of calls in a single network round trip.
+* Supports capability-based security patterns.
 
 ## Example
 
-_TODO: This is not a great example. Improve it!_
+A client looks like this:
 
-Declare your RPC interface like this:
+```js
+import { newWebSocketRpcSession } from "capnweb";
 
-```ts
-interface MyApi {
-  // Return who the user is logged in as.
-  whoami(): Promise<{name: string, id: string}>;
+// One-line setup.
+let api = newWebSocketRpcSession("wss://example.com/api");
 
-  // Get the given user's public profile info.
-  getUserProfile(userId: string): Promise<UserProfile>;
-}
+// Call a method on the server!
+let result = await api.hello("World");
+
+console.log(result);
 ```
 
-On the server, export it:
+Here's the server:
 
-```ts
-import { receiveRpcOverHttp, RpcTarget } from "capnweb";
+```js
+import { RpcTarget, newWorkersRpcResponse } from "capnweb";
 
-class MyApiImpl extends RpcTarget implements MyApi {
-  // ... implement api ...
+// This is the server implementation.
+class MyApiServer extends RpcTarget {
+  hello(name) {
+    return `Hello, ${name}!`
+  }
 }
 
-// Cloudflare Workers fetch handler. (Node is also supported; see below.)
+// Standard Cloudflare Workers HTTP handler.
 //
-// Note this handles both batch and WebSocket-oriented RPCs.
+// (Node and other runtimes are supported too; see below.)
 export default {
-  async fetch(req, env, ctx) {
-    let url = new URL(req.url);
+  fetch(request, env, ctx) {
+    // Parse URL for routing.
+    let url = new URL(request.url);
 
-    // Handle API endpoint.
+    // Serve API at `/api`.
     if (url.pathname === "/api") {
-      return receiveRpcOverHttp(request, new MyApiImpl(env, ctx));
+      return newWorkersRpcResponse(request, new MyApiServer());
     }
 
-    // ... handle other HTTP requests normally ...
+    // You could serve other endpoints here...
+    return new Response("Not found", {status: 404});
   }
 }
 ```
 
-(If you are using Node, [see this test fixture](__tests__/test-server.ts) for exmaple code. Unfortunately, it's a bit more involved as Node handles normal HTTP and WebSocket via entirely separate paths.)
+### More complicated example
 
-On the client, use it in a batch request:
+Here's an example that:
+* Uses TypeScript
+* Sends multiple calls, where the second call depends on the result of the first, in one round trip.
+
+We declare our interface in a shared types file:
 
 ```ts
-let batch = rpcOverHttp<MyApi>("https://example.com/api");
-let api = batch.getStub();
+interface PublicApi {
+  // Authenticate the API token, and returned the authenticated API.
+  authenticate(apiToken: string): AuthedApi;
 
-// Calling a function returns an RpcPromise for the result.
-let whoamiPromise = api.whoami();
+  // Get a given user's public profile info. (Doesn't require authentication.)
+  getUserProfile(userId: string): Promise<UserProfile>;
+}
 
-// `whoami()` will return the user ID. We haven't awaited the result yet,
-// but we can pass the user ID to other calls in the batch. This creates a
-// speculative, or "pipelined" call: on the server side, these calls will
-// only be executed after `authenticate` finishes.
-let profilePromise = api.getUserProfile(whoamiPromise.id);
+interface AuthedApi {
+  getUserId(): number;
 
-// Send the whole batch. Note that all calls must be initiated before this
-// point, but promises will not resolve until after.
-batch.send();
+  // Get the user IDs of all the user's friends.
+  getFriendIds(): number[];
+}
 
-// Now we can actually await the results from earlier. Although we made
-// two calls, both promises will resolve with only one round trip.
-let user = await whoamiPromise;
-let profile = await profilePromise;
+type UserProfile = {
+  name: string;
+  photoUrl: string;
+}
 ```
 
-Alternatively, we can set up a persistent WebSocket connection:
+(Note: you don't _have to_ declare your interface separately. The client could just use `import("./server").ApiServer` as the type.)
+
+On the server, we implement the interface as an RpcTarget:
 
 ```ts
-let session = rpcOverWebSocket<MyApi>("https://example.com/api");
-let api = session.getStub();
+import { newWorkersRpcResponse, RpcTarget } from "capnweb";
 
-// Usage of `api` is the same, except there is no `sendBatch()` step.
-// All calls are sent immediately. You can still send dependent calls
-// without waiting for previous calls to return.
+class ApiServer extends RpcTarget implements PublicApi {
+  // ... implement PublicApi ...
+}
+
+export default {
+  async fetch(req, env, ctx) {
+    // ... same as previous example ...
+  }
+}
+```
+
+On the client, we can use it in a batch request:
+
+```ts
+import { newHttpBatchRpcSession } from "capnweb";
+
+let api = newHttpBatchRpcSession<PublicApi>("https://example.com/api");
+
+// Call authenticate(), but don't await it. We can use the returned promise
+// to make "pipelined" calls without waiting.
+let authedApi: RpcPromise<AuthedApi> = api.authenticate(apiToken);
+
+// Make a pipelined call to get the user's ID. Again, don't await it.
+let userIdPromise: RpcPromise<number> = authedApi.getUserId();
+
+// Make another pipelined call to fetch the user's public profile, based on
+// the user ID. Notice how we can use `RpcPromise<T>` in the parameters of a
+// call anywhere where T is expected. The promise will be replaced with its
+// resolution before delivering the call.
+let profilePromise = api.getUserProfile(userIdPromise);
+
+// Make another call to get the user's friends.
+let friendsPromise = authedApi.getFriendIds();
+
+// That only returns an array of user IDs, but we want all the profile info
+// too, so use the magic .map() function to get them, too! Still one round
+// trip.
+let friendProfilesPromise = friendsPromise.map((id: RpcPromise<number>) => {
+  return { id, profile: api.getUserProfile(id); };
+});
+
+// Now await the promises. The batch is sent at this point. It's important
+// to simultaneously await all promises for which you actually want the
+// result. If you don't actually await a promise before the batch is sent,
+// the system detects this and doesn't actually ask the server to send the
+// return value back!
+let [profile, friendProfiles] =
+    await Promise.all([profilePromise, friendProfilesPromise]);
+
+console.log(`Hello, ${profile.name}!`);
+
+// Note that at this point, the `api` and `authedApi` stubs no longer work,
+// because the batch is done. You must start a new batch.
+```
+
+Alternatively, for a long-running interactive application, we can set up a persistent WebSocket connection:
+
+```ts
+import { newWebSocketRpcSession } from "capnweb";
+
+// We declare `api` with `using` so that it'll be disposed at the end of the
+// scope, which closes the connection. `using` is a fairly new JavaScript
+// feature, part of the "explicit resource management" spec. Alternatively,
+// we could declare `api` with `let` or `const` and make sure to call
+// `api[Symbol.dispose]()` to dispose it and close the connection later.
+using api = newWebSocketRpcSession<PublicApi>("https://example.com/api");
+
+// Usage is exactly the same, except we don't have to await all the promises
+// at once.
+
+// Authenticate and get the user ID in one round trip. Note we use `using`
+// again so that `authedApi` will be disposed when we're done with it. In
+// this case, it won't close the connection (since it's not the main stub),
+// but disposing it does release the `AuthedApi` object on the server side.
+using authedApi: RpcPromise<AuthedApi> = api.authenticate(apiToken);
+let userId: number = await authedApi.getUserId();
+
+// ... continue calling other methods, now or in the future ...
 ```
 
 ## RPC Basics
@@ -219,7 +311,7 @@ Instead, you may choose one of two strategies:
 
 1. Explicitly dispose stubs when you are done with them. This notifies the remote end that it can release the associated resources.
 
-2. Use short-lived sessions. When the session ends, all stubs are implicitly disposed. In particular, when using HTTP batch request, there's generally no need to dispose stubs. When using WebSocket sessions, however, disposal may be important.
+2. Use short-lived sessions. When the session ends, all stubs are implicitly disposed. In particular, when using HTTP batch request, there's generally no need to dispose stubs. When using long-lived WebSocket sessions, however, disposal may be important.
 
 ### How to dispose
 
@@ -237,14 +329,14 @@ The basic principle is: **The caller is responsible for disposing all stubs.** T
 * Stubs returned in the result of a call have their ownership transferred from the callee to the caller, and must be disposed by the caller.
 
 In practice, though, the callee and caller do not actually share the same stubs. When stubs are passed over RPC, they are _duplicated_, and the the target object is only disposed when all duplicates of the stub are disposed. Thus, to achieve the rule that only the caller needs to dispose stubs, the RPC system implicitly disposes the callee's duplicates of all stubs when the call completes. That is:
-* Any stubs the callee receives in the parameters are implciitly disposed when the call completes.
+* Any stubs the callee receives in the parameters are implicitly disposed when the call completes.
 * Any stubs returned in the results are implicitly disposed some time after the call completes. (Specifically, the RPC system will dispose them once it knows there will be no more pipelined calls.)
 
 Some additional wonky details:
 * Disposing an `RpcPromise` will automatically dispose the future result. (It may also cause the promise to be canceled and rejected, though this is not guaranteed.) If you don't intend to await an RPC promise, you should dispose it.
 * Passing an `RpcPromise` in params or the return value of a call has the same ownership / disposal rules as passing an `RpcStub`.
 * When you access a property of an `RpcStub` or `RpcPromise`, the result is itself an `RpcPromise`. However, this `RpcPromise` does not have its own disposer; you must dispose the stub or promise it came from. You can pass such properties in params or return values, but doing so will never lead to anything being implicitly disposed.
-* The caller of an RPC may dispose any stubs used in the parameters immediately after initiating the RPC, without waiting for the RPC to copmlete. All stubs are duplicated at the moment of the call, so the callee is not responsible for keeping them alive.
+* The caller of an RPC may dispose any stubs used in the parameters immediately after initiating the RPC, without waiting for the RPC to complete. All stubs are duplicated at the moment of the call, so the callee is not responsible for keeping them alive.
 * If the final result of an RPC returned to the caller is an object, it will always have a disposer. Disposing it will dispose all stubs found in that response. It's a good idea to always dispose return values even if you don't expect they contain any stubs, just in case the server changes the API in the future to add stubs to the result.
 
 WARNING: The ownership behavior of calls differs from the original behavior in the native RPC implementation built into the Cloudflare Workers Runtime. In the original Workers behavior, the callee loses ownership of stubs passed in a call's parameters. We plan to change the Workers Runtime to match Cap'n Web's behavior, as the original behavior has proven more problematic than helpful.
@@ -274,6 +366,14 @@ stub.onRpcBroken((error: any) => {
 If anything happens to the stub that would cause all further method calls and property accesses to throw exceptions, then the callback will be called. In particular, this happens if:
 * The stub's underlying connection is lost.
 * The stub is a promise, and the promise rejects.
+
+## Security Considerations
+
+* The WebSocket API in browsers always permits cross-site connections, and does not permit setting headers. Because of this, you generally cannot use cookies nor other headers for authentication. Instead, we highly recommend the pattern shown in the second example above, in which authentication happens in-band via an RPC method that returns the authenticated API.
+
+* Cap'n Web's pipelining can make it easy for a malicious client to enqueue a large amount of work to occur on a server. To mitigate this, we recommend implementing rate limits on expensive operations. If using Cloudflare Workers, you may also consider configuring [per-request CPU limits](https://developers.cloudflare.com/workers/wrangler/configuration/#limits) to be lower than the default 30s. Note that in stateless Workers (i.e. not Durable Objects), the system considers an entire WebSocket session to be one "request" for CPU limits purposes.
+
+* Cap'n Web currently does not provide any runtime type checking. When using TypeScript, keep in mind that types are checked only at compile time. A malicious client can send types you did not expect, and this could cause you application to behave in unexpected ways. For example, MongoDB uses special property names to express queries; placing attacker-provided values directly into queries can result in query injection vulnerabilities (similar to SQL injection). Of course, JSON has always had the same problem, and there exists tooling to solve it. You might consider using a runtime type-checking framework like Zod to check your inputs. In the future, we hope to explore auto-generating type-checking code based on TypeScript types.
 
 ## Setting up a session
 
@@ -347,7 +447,7 @@ interface MyApi extends RpcTarget {
 //
 // (Note that disposing the root stub will close the connection. Here we declare it with `using` so
 // that the connection will be closed when the stub goes out of scope, but you can also call
-// `stub[Symobl.dispose]()` directly.)
+// `stub[Symbol.dispose]()` directly.)
 using stub: RpcStub<MyApi> = newWebSocketRpcSession<MyApi>("wss://example.com/api");
 
 // With a WebSocket, we can freely make calls over time.
@@ -396,14 +496,88 @@ export default {
       return newWorkersRpcResponse(request, new MyApiImpl(userInfo));
     }
 
-    return new Respnose("Not found", {status: 404});
+    return new Response("Not found", {status: 404});
   }
 }
 ```
 
 ### HTTP server on Node.js
 
-_TODO: Not implemented yet_
+A server on Node.js is a bit more involved, due to the awkward handling of WebSockets in Node's HTTP library.
+
+```ts
+import http from "node:http";
+import { WebSocketServer } from 'ws';  // npm package
+import { RpcTarget, newWebSocketRpcSession, nodeHttpBatchRpcResponse } from "capnpweb";
+
+class MyApiImpl extends RpcTarget implements MyApi {
+  // ... define API, same as above ...
+}
+
+// Run standard HTTP server on a port.
+httpServer = http.createServer(async (request, response) => {
+  if (request.headers.upgrade?.toLowerCase() === 'websocket') {
+    // Ignore, should be handled by WebSocketServer instead.
+    return;
+  }
+
+  // Accept Cap'n Web requests at `/api`.
+  if (request.url === "/api") {
+    try {
+      nodeHttpBatchRpcResponse(request, response, new MyApiImpl(), {
+        // If you are accepting WebSockets, then you might as well accept cross-origin HTTP, since
+        // WebSockets always permit cross-origin request anyway. But, see security considerations
+        // for further discussion.
+        headers: { "Access-Control-Allow-Origin": "*" }
+      });
+    } catch (err) {
+      response.writeHead(500, { 'content-type': 'text/plain' });
+      response.end(String(err?.stack || err));
+    }
+    return;
+  }
+
+  response.writeHead(404, { 'content-type': 'text/plain' });
+  response.end("Not Found");
+});
+
+// Arrange to handle WebSockets as well, using the `ws` package. You can skip this if you only
+// want to handle HTTP batch requests.
+wsServer = new WebSocketServer({ server: httpServer })
+wsServer.on('connection', (ws) => {
+  // The `as any` here is because the `ws` module seems to have its own `WebSocket` type
+  // declaration that's incompatible with the standard one. In practice, though, they are
+  // compatible enough for Cap'n Web!
+  newWebSocketRpcSession(ws as any, new MyApiImpl());
+})
+
+// Accept requests on port 8080.
+httpServer.listen(8080);
+```
+
+### HTTP server on other runtimes
+
+Every runtime does HTTP handling and WebSockets a little differently, although most modern runtimes use the standard `Request` and `Response` types from the Fetch API, as well as the standard `WebSocket` API. You should be able to use these two functions (exported by `capnweb`) to implement both HTTP batch and WebSocket handling on all platforms:
+
+```ts
+// Run a single HTTP batch.
+function newHttpBatchRpcResponse(
+    request: Request, yourApi: RpcTarget, options?: RpcSessionOptions)
+    : Promise<Response>;
+
+// Run a WebSocket session.
+//
+// This is actually the same function as is used on the client side! But on the
+// server, you should pass in a `WebSocket` object representing the already-open
+// connection, instead of a URL string, and you pass your API implementation as
+// the second parameter.
+//
+// You can dispose the returned `Disposable` to close the connection, or just
+// let it run until the client closes it.
+function newWebSocketRpcSession(
+    webSocket: WebSocket, yourApi: RpcTarget, options?: RpcSessionOptions)
+    : Disposable;
+```
 
 ### MessagePort
 
@@ -433,7 +607,7 @@ console.log(await stub.greet("Alice"));
 console.log(await stub.greet("Bob"));
 ```
 
-Of course, in a real-world scenario, you'd probably want to send one of the two ports to another context. A `MesasgePort` can itself be transferred to another context using `postMessage()`, e.g. `window.postMessage()`, `worker.postMessage()`, or even `port.postMessage()` on some other existing `MesasgePort`.
+Of course, in a real-world scenario, you'd probably want to send one of the two ports to another context. A `MessagePort` can itself be transferred to another context using `postMessage()`, e.g. `window.postMessage()`, `worker.postMessage()`, or even `port.postMessage()` on some other existing `MessagePort`.
 
 Note that you should not use a `Window` object itself as a port for RPC -- you should always create a new `MessageChannel` and send one of the ports over. This is because anyone can `postMessage()` to a window, and the RPC system does not authenticate that messages came from the expected sender. You need to verify that you received the port itself from the expected sender first, then let the RPC system take over.
 
