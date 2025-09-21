@@ -64,10 +64,24 @@ export let newMessagePortRpcSession:
     (port: MessagePort, localMain?: any, options?: RpcSessionOptions) => Stubify<T> =
     <any>newMessagePortRpcSessionImpl;
 
-// Implements inified handling of HTTP-batch and WebSocket responses for the Workers Runtime.
-export function newWorkersRpcResponse(request: Request, localMain: any) {
+// Implements inified handling of HTTP-batch and WebSocket responses for the Cloudflare Workers
+// Runtime.
+//
+// SECURITY WARNING: This function accepts cross-origin requests. If you do not want this, you
+// should validate the `Origin` header before calling this, or use `newHttpBatchRpcSession()` and
+// `newWebSocketRpcSession()` directly with appropriate security measures for each type of request.
+// But if your API uses in-band authorization (i.e. it has an RPC method that takes the user's
+// credentials as parameters and returns the authorized API), then cross-origin requests should
+// be safe.
+export async function newWorkersRpcResponse(request: Request, localMain: any) {
   if (request.method === "POST") {
-    return newHttpBatchRpcResponse(request, localMain);
+    let response = await newHttpBatchRpcResponse(request, localMain);
+    // Since we're exposing the same API over WebSocket, too, and WebScoket always allows
+    // cross-origin requests, the API necessarily must be safe for cross-origin use (e.g. because
+    // it uses in-band authorization, as recommended in the readme). So, we might as well allow
+    // batch requests to be made cross-origin as well.
+    response.headers.set("Access-Control-Allow-Origin", "*");
+    return response;
   } else if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
     return newWorkersWebSocketRpcResponse(request, localMain);
   } else {
