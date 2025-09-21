@@ -1,24 +1,33 @@
 import { StubHook, RpcPayload, RpcStub, PropertyPath, PayloadStubHook, ErrorStubHook, RpcTarget, unwrapStubAndPath } from "./core.js";
 import { Devaluator, Evaluator, ExportId, ImportId, Exporter, Importer, serialize } from "./serialize.js";
 
-// Interface for an RPC transport, which is a simple bidirectional message stream.
+/**
+ * Interface for an RPC transport, which is a simple bidirectional message stream. Implement this
+ * interface if the built-in transports (e.g. for HTTP batch and WebSocket) don't meet your needs.
+ */
 export interface RpcTransport {
-  // Sends a message to the other end.
+  /**
+   * Sends a message to the other end.
+   */
   send(message: string): Promise<void>;
 
-  // Receives a message sent by the other end.
-  //
-  // If and when the transport becomes disconnected, this will reject. The thrown error will be
-  // propagated to all outstanding calls and future calls on any stubs associated with the session.
-  // If there are no outstanding calls (and none are made in the future), then the error does not
-  // propagate anywhere -- this is considered a "clean" shutdown.
+  /**
+   * Receives a message sent by the other end.
+   *
+   * If and when the transport becomes disconnected, this will reject. The thrown error will be
+   * propagated to all outstanding calls and future calls on any stubs associated with the session.
+   * If there are no outstanding calls (and none are made in the future), then the error does not
+   * propagate anywhere -- this is considered a "clean" shutdown.
+   */
   receive(): Promise<string>;
 
-  // Indicates that the RPC system has suffered an error that prevents the session from continuing.
-  // The transport should ideally try to send any queued messages if it can, and then close the
-  // connection. (It's not strictly necessary to deliver queued messages, but the last message sent
-  // before abort() is called is often an "abort" message, which communicates the error to the
-  // peer, so if that is dropped, the peer may have less information about what happened.)
+  /**
+   * Indicates that the RPC system has suffered an error that prevents the session from continuing.
+   * The transport should ideally try to send any queued messages if it can, and then close the
+   * connection. (It's not strictly necessary to deliver queued messages, but the last message sent
+   * before abort() is called is often an "abort" message, which communicates the error to the
+   * peer, so if that is dropped, the peer may have less information about what happened.)
+   */
   abort?(reason: any): void;
 }
 
@@ -268,16 +277,22 @@ class RpcMainHook extends RpcImportHook {
   }
 }
 
+/**
+ * Options to customize behavior of an RPC session. All functions which start a session should
+ * optionally accept this.
+ */
 export type RpcSessionOptions = {
-  // If provided, this function will be called whenever an `Error` object is serialized (for any
-  // resaon, not just because it was thrown). This can be used to log errors, and also to redact
-  // them.
-  //
-  // If `onSendError` returns an Error object, than object will be substituted in place of the
-  // original. If it has a stack property, the stack will be sent to the client.
-  //
-  // If `onSendError` doesn't return anything (or is not provided at all), the default behavior is
-  // to serialize the error with the stack omitted.
+  /**
+   * If provided, this function will be called whenever an `Error` object is serialized (for any
+   * resaon, not just because it was thrown). This can be used to log errors, and also to redact
+   * them.
+   *
+   * If `onSendError` returns an Error object, than object will be substituted in place of the
+   * original. If it has a stack property, the stack will be sent to the client.
+   *
+   * If `onSendError` doesn't return anything (or is not provided at all), the default behavior is
+   * to serialize the error with the stack omitted.
+   */
   onSendError?: (error: Error) => Error | void;
 };
 

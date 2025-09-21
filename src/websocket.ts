@@ -3,10 +3,6 @@
 import { RpcStub } from "./core.js";
 import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
 
-// Start a WebSocket session given either an already-open WebSocket or a URL.
-//
-// `localMain` is the main RPC interface to expose to the peer. Returns a stub for the main
-// interface exposed from the peer.
 export function newWebSocketRpcSession(
     webSocket: WebSocket | string, localMain?: any, options?: RpcSessionOptions): RpcStub {
   if (typeof webSocket === "string") {
@@ -18,8 +14,10 @@ export function newWebSocketRpcSession(
   return rpc.getRemoteMain();
 }
 
-// For use in Cloudflare Workers: Construct an HTTP response that starts a WebSocket RPC session
-// with the given `localMain`.
+/**
+ * For use in Cloudflare Workers: Construct an HTTP response that starts a WebSocket RPC session
+ * with the given `localMain`.
+ */
 export function newWorkersWebSocketRpcResponse(
     request: Request, localMain?: any, options?: RpcSessionOptions): Response {
   if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {

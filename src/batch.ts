@@ -122,6 +122,16 @@ class BatchServerTransport implements RpcTransport {
   }
 }
 
+/**
+ * Implements the server end of an HTTP batch session, using standard Fetch API types to represent
+ * HTTP requests and responses.
+ *
+ * @param request The request received from the client initiating the session.
+ * @param localMain The main stub or RpcTarget which the server wishes to expose to the client.
+ * @param options Optional RPC sesison options.
+ * @returns The HTTP response to return to the client. Note that the returned object has mutable
+ *     headers, so you can modify them using e.g. `response.headers.set("Foo", "bar")`.
+ */
 export async function newHttpBatchRpcResponse(
     request: Request, localMain: any, options?: RpcSessionOptions): Promise<Response> {
   if (request.method !== "POST") {
@@ -149,6 +159,14 @@ export async function newHttpBatchRpcResponse(
   return new Response(transport.getResponseBody());
 }
 
+/**
+ * Implements the server end of an HTTP batch session using traditional Node.js HTTP APIs.
+ *
+ * @param request The request received from the client initiating the session.
+ * @param response The response object, to which the response should be written.
+ * @param localMain The main stub or RpcTarget which the server wishes to expose to the client.
+ * @param options Optional RPC sesison options. You can also pass headers to set on the response.
+ */
 export async function nodeHttpBatchRpcResponse(
     request: IncomingMessage, response: ServerResponse,
     localMain: any,

@@ -123,7 +123,7 @@ type MaybeDisposable<T> = T extends object ? Disposable : unknown;
 // - Stubable types are replaced by stubs.
 // - Serializable types are passed by value, with stubable types replaced by stubs
 //   and a top-level `Disposer`.
-// Everything else can't be passed over PRC.
+// Everything else can't be passed over RPC.
 // Technically, we use custom thenables here, but they quack like `Promise`s.
 // Intersecting with `(Maybe)Provider` allows pipelining.
 // prettier-ignore
