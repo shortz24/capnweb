@@ -6,7 +6,7 @@
 //   3) Client: node examples/batch-pipelining/client.mjs
 
 import http from 'node:http';
-import { newHttpBatchRpcResponse, RpcTarget } from '../../dist/index.js';
+import { nodeHttpBatchRpcResponse, RpcTarget } from '../../dist/index.js';
 
 // Simple helper to simulate server-side processing latency.
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -60,24 +60,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Accumulate request body as text (batch lines).
-  let body = '';
-  for await (const chunk of req) {
-    body += chunk;
-  }
-
-  // Bridge Node http to Fetch Request/Response for newHttpBatchRpcResponse().
-  const request = new Request(`http://localhost:${PORT}/rpc`, {
-    method: 'POST',
-    body,
-  });
-
   try {
-    const response = await newHttpBatchRpcResponse(request, new Api());
-    const text = await response.text();
-    const headers = Object.fromEntries(response.headers.entries());
-    res.writeHead(response.status, headers);
-    res.end(text);
+    await nodeHttpBatchRpcResponse(req, res, new Api());
   } catch (err) {
     res.writeHead(500, { 'content-type': 'text/plain' });
     res.end(String(err?.stack || err));

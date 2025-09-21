@@ -1,6 +1,7 @@
 import { expect, it, describe, inject } from "vitest"
 import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
-         RpcStub, newWebSocketRpcSession, newMessagePortRpcSession } from "../src/index.js"
+         RpcStub, newWebSocketRpcSession, newMessagePortRpcSession,
+         newHttpBatchRpcSession} from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
@@ -1301,6 +1302,21 @@ describe("onRpcBroken", () => {
 });
 
 // =======================================================================================
+
+describe("HTTP requests", () => {
+  it("can perform a batch HTTP request", async () => {
+    let cap = newHttpBatchRpcSession<TestTarget>(`http://${inject("testServerHost")}`);
+
+    let promise1 = cap.square(6);
+
+    let counter = cap.makeCounter(2);
+    let promise2 = counter.increment(3);
+    let promise3 = cap.incrementCounter(counter, 4);
+
+    expect(await Promise.all([promise1, promise2, promise3]))
+        .toStrictEqual([36, 5, 9]);
+  });
+});
 
 describe("WebSockets", () => {
   it("can open a WebSocket connection", async () => {

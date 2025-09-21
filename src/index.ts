@@ -5,14 +5,15 @@ import { RpcTargetBranded, Serializable, Stub, Stubify, __RPC_TARGET_BRAND } fro
 import { newWebSocketRpcSession as newWebSocketRpcSessionImpl,
          newWorkersWebSocketRpcResponse } from "./websocket.js";
 import { newHttpBatchRpcSession as newHttpBatchRpcSessionImpl,
-         newHttpBatchRpcResponse } from "./batch.js";
+         newHttpBatchRpcResponse, nodeHttpBatchRpcResponse } from "./batch.js";
 import { newMessagePortRpcSession as newMessagePortRpcSessionImpl } from "./messageport.js";
 import { forceInitMap } from "./map.js";
 
 forceInitMap();
 
 // Re-export public API types.
-export { serialize, deserialize, newWorkersWebSocketRpcResponse, newHttpBatchRpcResponse };
+export { serialize, deserialize, newWorkersWebSocketRpcResponse, newHttpBatchRpcResponse,
+         nodeHttpBatchRpcResponse };
 export type { RpcTransport, RpcSessionOptions };
 
 // Hack the type system to make RpcStub's types work nicely!

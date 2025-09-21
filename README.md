@@ -33,7 +33,7 @@ class MyApiImpl extends RpcTarget implements MyApi {
   // ... implement api ...
 }
 
-// Cloudflare Workers fetch handler.
+// Cloudflare Workers fetch handler. (Node is also supported; see below.)
 //
 // Note this handles both batch and WebSocket-oriented RPCs.
 export default {
@@ -49,6 +49,8 @@ export default {
   }
 }
 ```
+
+(If you are using Node, [see this test fixture](__tests__/test-server.ts) for exmaple code. Unfortunately, it's a bit more involved as Node handles normal HTTP and WebSocket via entirely separate paths.)
 
 On the client, use it in a batch request:
 
