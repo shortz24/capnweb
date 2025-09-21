@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Cloudflare, Inc.
+// Licensed under the MIT license found in the LICENSE.txt file or at:
+//     https://opensource.org/license/mit
+
 import { StubHook, PropertyPath, RpcPayload, RpcStub, RpcPromise, withCallInterceptor, ErrorStubHook, mapImpl, PayloadStubHook, unwrapStubAndPath, unwrapStubNoProperties } from "./core.js";
 import { Devaluator, Exporter, Importer, ExportId, ImportId, Evaluator } from "./serialize.js";
 

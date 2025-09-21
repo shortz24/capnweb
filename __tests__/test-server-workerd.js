@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Cloudflare, Inc.
+// Licensed under the MIT license found in the LICENSE.txt file or at:
+//     https://opensource.org/license/mit
+
 // Test server implemented in workerd instead of Node.
 //
 // This is only used by the workerd tests, across a service binding.

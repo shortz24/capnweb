@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Cloudflare, Inc.
+// Licensed under the MIT license found in the LICENSE.txt file or at:
+//     https://opensource.org/license/mit
+
 // This file borrows heavily from `types/defines/rpc.d.ts` in workerd.
 
 // Branded types for identifying `WorkerEntrypoint`/`DurableObject`/`Target`s.
