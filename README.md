@@ -297,6 +297,23 @@ The trick here is record-replay: On the calling side, Cap'n Web will invoke your
 
 Since all of the not-yet-determined values seen by the callback are represented as `RpcPromise`s, the callback's behavior is deterministic. Any actual computation (arithmetic, branching, etc.) can't possibly use these promises as (meaningful) inputs, so would logically produce the same results for every invocation of the callback. Any such computation will actually end up being performed on the sending side, just once, with the results being imbued into the recording.
 
+### Cloudflare Workers RPC interoperability
+
+Cap'n Web works on any JavaScript platform. But, on Cloudflare Workers specifically, it's designed to play nicely with the [the built-in RPC system](https://blog.cloudflare.com/javascript-native-rpc/). The two have basically the same semantics, the only difference being that Workers RPC is a built-in API provided by the Workers Runtime, whereas Cap'n Web is implemented in pure JavaScript.
+
+To facilitate interoperability:
+* On Workers, the `RpcTarget` class exported by "capnweb" is just an alias of the built-in one, so you can use them interchangeably.
+* RPC stubs and promises originating from one RPC system can be passed over the other. This will automatically set up proxying.
+* You can also send Workers Service Bindings and Durable Object stubs over Cap'n Web -- again, this sets up proxying.
+
+So basically, it "just works".
+
+With that said, as of this writing, the feature set is not exactly the same between the two. We aim to fix this over time, by adding missing features to both sides until they match. In particular, as of this writing:
+* Workers RPC supports some types that Cap'n Web does not yet, like `Map`, streams, etc.
+* Workers RPC supports sending values that contain aliases and cycles. This can actually cause problems, so we actually plan to *remove* this feature from Workers RPC (with a compatibility flag, of course).
+* Workers RPC does not yet support placing an `RpcPromise` into the parameters of a request, to be replaced by its resolution.
+* Workers RPC does not yet support the magic `.map()` method.
+
 ## Resource Management and Disposal
 
 Unfortunately, garbage collection does not work well when remote resources are involved, for two reasons:
