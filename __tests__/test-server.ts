@@ -1,3 +1,7 @@
+// Copyright (c) 2025 Cloudflare, Inc.
+// Licensed under the MIT license found in the LICENSE.txt file or at:
+//     https://opensource.org/license/mit
+
 // Implements a test RPC backend server for tests to try connecting to.
 //
 // This is intended to be used as a vitest `globalSetup`. That means this strictly runs under Node.
