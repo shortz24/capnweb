@@ -1,6 +1,7 @@
 import { expect, it, describe, inject } from "vitest"
 import { deserialize, serialize, RpcSession, type RpcSessionOptions, RpcTransport, RpcTarget,
-         RpcStub, newWebSocketRpcSession, newMessagePortRpcSession } from "../src/index.js"
+         RpcStub, newWebSocketRpcSession, newMessagePortRpcSession,
+         newHttpBatchRpcSession} from "../src/index.js"
 import { Counter, TestTarget } from "./test-util.js";
 
 let SERIALIZE_TEST_CASES: Record<string, unknown> = {
@@ -17,7 +18,9 @@ let SERIALIZE_TEST_CASES: Record<string, unknown> = {
   '{"foo":[[123]]}': {foo: [123]},
   '{"foo":[[123]],"bar":[[456,789]]}': {foo: [123], bar: [456, 789]},
 
+  '["bigint","123"]': 123n,
   '["date",1234]': new Date(1234),
+  '["bytes","aGVsbG8h"]': new TextEncoder().encode("hello!"),
   '["undefined"]': undefined,
   '["error","Error","the message"]': new Error("the message"),
   '["error","TypeError","the message"]': new TypeError("the message"),
@@ -49,7 +52,11 @@ describe("simple serialization", () => {
 
   it("throws an error if the value can't be serialized", () => {
     expect(() => serialize(new NotSerializable(123))).toThrowError(
-      new TypeError("cannot serialize: NotSerializable(123)")
+      new TypeError("Cannot serialize value: NotSerializable(123)")
+    );
+
+    expect(() => serialize(Object.create(null))).toThrowError(
+      new TypeError("Cannot serialize value: (couldn't stringify value)")
     );
   })
 
@@ -129,11 +136,6 @@ class TestTransport implements RpcTransport {
   forceReceiveError(error: any) {
     this.aborter!(error);
   }
-}
-
-function withoutDisposer(obj: any) {
-  delete obj[Symbol.dispose];
-  return obj;
 }
 
 // Spin the microtask queue a bit to give messages time to be delivered and handled.
@@ -264,14 +266,20 @@ describe("local stub", () => {
     expect(await outerStub.innerTarget.square(3)).toBe(9);
   });
 
-  it("throws error when accessing non-existent properties", async () => {
+  it("returns undefined when accessing non-existent properties", async () => {
     let objectStub = new RpcStub({foo: "bar"});
     let arrayStub = new RpcStub([1, 2, 3]);
     let targetStub = new RpcStub(new TestTarget());
 
-    await expect(() => (objectStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
-    await expect(() => (arrayStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
-    await expect(() => (targetStub as any).nonExistent).rejects.toThrow("RPC object has no property 'nonExistent'");
+    expect(await (objectStub as any).nonExistent).toBe(undefined);
+    expect(await (arrayStub as any).nonExistent).toBe(undefined);
+    expect(await (targetStub as any).nonExistent).toBe(undefined);
+
+    // Accessing a property of undefined should throw TypeError (but the error message differs
+    // across runtimes).
+    await expect(() => (objectStub as any).nonExistent.foo).rejects.toThrow(TypeError);
+    await expect(() => (arrayStub as any).nonExistent.foo).rejects.toThrow(TypeError);
+    await expect(() => (targetStub as any).nonExistent.foo).rejects.toThrow(TypeError);
   });
 
   it("exposes only prototype properties for RpcTarget, not instance properties", async () => {
@@ -293,8 +301,8 @@ describe("local stub", () => {
 
     expect(await stub.prototypeProp).toBe("prototype");
     expect(await stub.prototypeMethod()).toBe("method");
-    await expect(() => (stub as any).instanceProp).rejects.toThrow("RPC object has no property 'instanceProp'");
-    await expect(() => (stub as any).dynamicProp).rejects.toThrow("RPC object has no property 'dynamicProp'");
+    expect(await (stub as any).instanceProp).toBe(undefined);
+    expect(await (stub as any).dynamicProp).toBe(undefined);
   });
 
   it("does not expose private methods starting with #", async () => {
@@ -305,7 +313,7 @@ describe("local stub", () => {
 
     let stub = new RpcStub(new TargetWithPrivate());
     expect(await stub.publicMethod()).toBe("public");
-    await expect(() => (stub as any)["#privateMethod"]).rejects.toThrow("RPC object has no property '#privateMethod'");
+    expect(await (stub as any)["#privateMethod"]).toBe(undefined);
   });
 
   it("supports map() on nulls", async () => {
@@ -364,7 +372,7 @@ describe("local stub", () => {
       });
     });
 
-    expect(withoutDisposer(result)).toStrictEqual([
+    expect(result).toStrictEqual([
       [],
       [[]],
       [[]],
@@ -531,7 +539,7 @@ describe("basic rpc", () => {
     let stub = harness.stub;
 
     expect(() => stub.square(new NotSerializable(123) as any)).toThrow(
-      new TypeError("cannot serialize: NotSerializable(123)")
+      new TypeError("Cannot serialize value: NotSerializable(123)")
     );
   });
 
@@ -546,7 +554,7 @@ describe("basic rpc", () => {
     let stub = harness.stub as any;
 
     await expect(() => stub.returnNonSerializable()).rejects.toThrow(
-      new TypeError("cannot serialize: NotSerializable(456)")
+      new TypeError("Cannot serialize value: NotSerializable(456)")
     );
   });
 
@@ -564,41 +572,56 @@ describe("basic rpc", () => {
     // a common object property.
 
     // Properties of Object.prototype should not be exposed over RPC.
-    await expect(() => stub.$remove$toString).rejects.toThrow("RPC object has no property 'toString'");
-    await expect(() => stub.$remove$hasOwnProperty).rejects.toThrow("RPC object has no property 'hasOwnProperty'");
+    expect(await stub.$remove$toString).toBe(undefined);
+    expect(await stub.$remove$hasOwnProperty).toBe(undefined);
 
     // Special properties are not exposed.
-    await expect(() => stub.$remove$__proto__).rejects.toThrow("RPC object has no property '__proto__'");
-    await expect(() => stub.$remove$constructor).rejects.toThrow("RPC object has no property 'constructor'");
+    expect(await stub.$remove$__proto__).toBe(undefined);
+    expect(await stub.$remove$constructor).toBe(undefined);
   });
 
   it("does not expose common Object properties on RpcTarget", async () => {
     class ObjectVendor extends RpcTarget {
       get() {
-        return new RpcStub<object>({foo: 123, arr: [1, 2], func(x: number) { return 123; }});
+        return new RpcStub<object>({
+          foo: 123,
+          arr: [1, 2],
+          func(x: any) { return `${x}`; },
+          jsonify(x: any) { return JSON.stringify(x); },
+          toString() { return "special string"; }
+        });
       }
     }
 
-    await using harness = new TestHarness(new ObjectVendor());
+    await using harness = new TestHarness(new ObjectVendor(), {
+      onSendError(err) { return err; }
+    });
     using stub: any = await harness.stub.get();
 
     expect(await stub.foo).toBe(123);
+    expect(await stub.func(321)).toBe("321");
 
     // Similar to previous test case, but we're operating on a stub backed by an object rather
     // than an RpcTarget now.
 
     // Properties of Object.prototype should not be exposed over RPC.
-    await expect(() => stub.$remove$toString).rejects.toThrow("RPC object has no property 'toString'");
-    await expect(() => stub.$remove$hasOwnProperty).rejects.toThrow("RPC object has no property 'hasOwnProperty'");
+    expect(await stub.$remove$toString).toBe(undefined);
+    expect(await stub.$remove$hasOwnProperty).toBe(undefined);
 
     // Properties of Array.prototype and Function.prototype are similarly not exposed even for
     // values of those types.
-    await expect(() => stub.arr.$remove$map).rejects.toThrow("'arr' has no property 'map'");
-    await expect(() => stub.func.$remove$call).rejects.toThrow("RPC object has no property 'call'");
+    expect(await stub.arr.$remove$map).toBe(undefined);
+    expect(await stub.func.$remove$call).toBe(undefined);
 
     // Special properties are not exposed.
-    await expect(() => stub.$remove$__proto__).rejects.toThrow("RPC object has no property '__proto__'");
-    await expect(() => stub.$remove$constructor).rejects.toThrow("RPC object has no property 'constructor'");
+    expect(await stub.$remove$__proto__).toBe(undefined);
+    expect(await stub.$remove$constructor).toBe(undefined);
+
+    expect(await stub.func({})).toBe("[object Object]");
+    expect(await stub.func({$remove$toString: "bad"})).toBe("[object Object]");
+    expect(await stub.func({$remove$__proto__: {toString: "bad"}})).toBe("[object Object]");
+
+    expect(await stub.jsonify({x: 123, $remove$toJSON: () => "bad"})).toBe('{"x":123}');
   });
 });
 
@@ -735,7 +758,7 @@ describe("promise pipelining", () => {
   it("supports returning a promise", async () => {
     await using harness = new TestHarness(new TestTarget());
     let stub = harness.stub;
-    expect(withoutDisposer(await stub.callSquare(stub, 3))).toStrictEqual({result: 9});
+    expect(await stub.callSquare(stub, 3)).toStrictEqual({result: 9});
   });
 
   it("propagates errors to pipelined calls", async () => {
@@ -867,7 +890,7 @@ describe("map() over RPC", () => {
       });
     });
 
-    expect(withoutDisposer(result)).toStrictEqual([
+    expect(result).toStrictEqual([
       [],
       [[]],
       [[]],
@@ -1279,6 +1302,21 @@ describe("onRpcBroken", () => {
 });
 
 // =======================================================================================
+
+describe("HTTP requests", () => {
+  it("can perform a batch HTTP request", async () => {
+    let cap = newHttpBatchRpcSession<TestTarget>(`http://${inject("testServerHost")}`);
+
+    let promise1 = cap.square(6);
+
+    let counter = cap.makeCounter(2);
+    let promise2 = counter.increment(3);
+    let promise3 = cap.incrementCounter(counter, 4);
+
+    expect(await Promise.all([promise1, promise2, promise3]))
+        .toStrictEqual([36, 5, 9]);
+  });
+});
 
 describe("WebSockets", () => {
   it("can open a WebSocket connection", async () => {

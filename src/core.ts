@@ -23,7 +23,8 @@ export let RpcTarget = workersModule ? workersModule.RpcTarget : class {};
 export type PropertyPath = (string | number)[];
 
 type TypeForRpc = "unsupported" | "primitive" | "object" | "function" | "array" | "date" |
-    "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" | "undefined";
+    "bigint" | "bytes" | "stub" | "rpc-promise" | "rpc-target" | "rpc-thenable" | "error" |
+    "undefined";
 
 export function typeForRpc(value: unknown): TypeForRpc {
   switch (typeof value) {
@@ -39,6 +40,9 @@ export function typeForRpc(value: unknown): TypeForRpc {
     case "function":
       // Test by prototype, below.
       break;
+
+    case "bigint":
+      return "bigint";
 
     default:
       return "unsupported";
@@ -66,6 +70,9 @@ export function typeForRpc(value: unknown): TypeForRpc {
     case Date.prototype:
       return "date";
 
+    case Uint8Array.prototype:
+      return "bytes";
+
     // TODO: All other structured clone types.
 
     case RpcStub.prototype:
@@ -81,7 +88,7 @@ export function typeForRpc(value: unknown): TypeForRpc {
         // TODO: We also need to match `RpcPromise` and `RpcProperty`, but they currently aren't
         //   exported by cloudflare:workers.
         if (prototype == workersModule.RpcStub.prototype ||
-            prototype == workersModule.ServiceStub.prototype) {
+            value instanceof workersModule.ServiceStub) {
           return "rpc-target";
         } else if (prototype == workersModule.RpcPromise.prototype ||
                    prototype == workersModule.RpcProperty.prototype) {
@@ -753,7 +760,9 @@ export class RpcPayload {
         return value;
 
       case "primitive":
+      case "bigint":
       case "date":
+      case "bytes":
       case "error":
       case "undefined":
         // immutable, no need to copy
@@ -965,7 +974,21 @@ export class RpcPayload {
       // Add disposer to result.
       if (result instanceof Object) {
         if (!(Symbol.dispose in result)) {
-          (<Disposable>result)[Symbol.dispose] = () => this.dispose();
+          // We want the disposer to be non-enumerable as otherwise it gets in the way of things
+          // like unit tests trying to deep-compare the result to an object.
+          Object.defineProperty(result, Symbol.dispose, {
+            // NOTE: Using `this.dispose.bind(this)` here causes Playwright's build of
+            //   Chromium 140.0.7339.16 to fail when the object is assigned to a `using` variable,
+            //   with the error:
+            //       TypeError: Symbol(Symbol.dispose) is not a function
+            //   I cannot reproduce this problem in Chrome 140.0.7339.127 nor in Node or workerd,
+            //   so maybe it was a short-lived V8 bug or something. To be safe, though, we use
+            //   `() => this.dispose()`, which seems to always work.
+            value: () => this.dispose(),
+            writable: true,
+            enumerable: false,
+            configurable: true,
+          });
         }
       }
 
@@ -1005,6 +1028,8 @@ export class RpcPayload {
     switch (kind) {
       case "unsupported":
       case "primitive":
+      case "bigint":
+      case "bytes":
       case "date":
       case "error":
       case "undefined":
@@ -1089,6 +1114,8 @@ export class RpcPayload {
     switch (kind) {
       case "unsupported":
       case "primitive":
+      case "bigint":
+      case "bytes":
       case "date":
       case "error":
       case "undefined":
@@ -1153,46 +1180,52 @@ type FollowPathResult = {
   owner?: never,
 };
 
-function throwPathError(path: PropertyPath, i: number): never {
-  if (i === 0) {
-    throw new TypeError(`RPC object has no property '${path[i]}'`);
-  } else {
-    let subPath = path.slice(0, i).join(".");
-    throw new TypeError(`'${subPath}' has no property '${path[i]}'`);
-  }
-}
-
 function followPath(value: unknown, parent: object | undefined,
                     path: PropertyPath, owner: RpcPayload | null): FollowPathResult {
   for (let i = 0; i < path.length; i++) {
     parent = <object>value;
 
     let part = path[i];
-    if (part === "__proto__" || part === "constructor") {
-      throwPathError(path, i);
+    if (part in Object.prototype) {
+      // Don't allow messing with Object.prototype properties over RPC. We block these even if
+      // the specific object has overridden them for consistency with the deserialization code,
+      // which will refuse to deserialize an object containing such properties. Anyway, it's
+      // impossible for a normal client to even request these because accessing Object prototype
+      // properties on a stub will resolve to the local prototype property, not making an RPC at
+      // all.
+      value = undefined;
+      continue;
     }
 
     let kind = typeForRpc(value);
     switch (kind) {
       case "object":
-      case "array":
       case "function":
         // Must be own property, NOT inherited from a prototype.
-        if (!Object.hasOwn(<object>value, part)) {
-          throwPathError(path, i);
+        if (Object.hasOwn(<object>value, part)) {
+          value = (<any>value)[part];
+        } else {
+          value = undefined;
         }
-        value = (<any>value)[part];
+        break;
+
+      case "array":
+        // For arrays, restricrt specifically to numeric indexes, to be consistent with
+        // serialization, which only sends a flat list.
+        if (Number.isInteger(part) && <number>part >= 0) {
+          value = (<any>value)[part];
+        } else {
+          value = undefined;
+        }
         break;
 
       case "rpc-target":
       case "rpc-thenable": {
         // Must be prototype property, and must NOT be inherited from `Object`.
         if (Object.hasOwn(<object>value, part)) {
-          throwPathError(path, i);
-        }
-        value = (<any>value)[part];
-        if (!value || value === (<any>Object.prototype)[part]) {
-          throwPathError(path, i);
+          value = undefined;
+        } else {
+          value = (<any>value)[part];
         }
 
         // Since we're descending into the RpcTarget, the rest of the path is not "owned" by any
@@ -1209,11 +1242,18 @@ function followPath(value: unknown, parent: object | undefined,
       }
 
       case "primitive":
+      case "bigint":
+      case "bytes":
       case "date":
       case "error":
-      case "undefined":
         // These have no properties that can be accessed remotely.
-        throwPathError(path, i);
+        value = undefined;
+        break;
+
+      case "undefined":
+        // Intentionally produce TypeError.
+        value = (value as any)[part];
+        break;
 
       case "unsupported": {
         if (i === 0) {

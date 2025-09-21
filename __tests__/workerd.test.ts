@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import { expect, it, describe } from "vitest";
-import { RpcStub as NativeRpcStub, RpcTarget as NativeRpcTarget, env } from "cloudflare:workers";
+import { RpcStub as NativeRpcStub, RpcTarget as NativeRpcTarget, env, DurableObject } from "cloudflare:workers";
 import { newHttpBatchRpcSession, newWebSocketRpcSession, RpcStub, RpcTarget } from "../src/index.js";
 import { Counter, TestTarget } from "./test-util.js";
 
@@ -223,6 +223,15 @@ interface Env {
   testServer: Fetcher
 }
 
+interface TestDo extends DurableObject {
+  setValue(val: any): void;
+  getValue(): any;
+}
+
+interface WorkerdTestTarget extends TestTarget {
+  getDurableObject(name: string): DurableObjectStub<TestDo>;
+}
+
 describe("workerd RPC server", () => {
   it("can accept WebSocket RPC connections", async () => {
     let resp = await (<Env>env).testServer.fetch("http://foo", {headers: {Upgrade: "websocket"}});
@@ -230,7 +239,7 @@ describe("workerd RPC server", () => {
     expect(ws).toBeTruthy();
 
     ws!.accept();
-    let cap = newWebSocketRpcSession<TestTarget>(ws!);
+    let cap = newWebSocketRpcSession<WorkerdTestTarget>(ws!);
 
     expect(await cap.square(5)).toBe(25);
 
@@ -242,6 +251,18 @@ describe("workerd RPC server", () => {
     {
       let counter = new Counter(4);
       expect(await cap.incrementCounter(counter, 9)).toBe(13);
+    }
+
+    // Test that we can pass a Durable Object stub over RPC.
+    {
+      let foo = cap.getDurableObject("foo");
+      foo.setValue(123);
+
+      let bar = await cap.getDurableObject("bar");
+      bar.setValue("abc");
+
+      expect(await foo.getValue()).toBe(123);
+      expect(await bar.getValue()).toBe("abc");
     }
   })
 

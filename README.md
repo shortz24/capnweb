@@ -33,7 +33,7 @@ class MyApiImpl extends RpcTarget implements MyApi {
   // ... implement api ...
 }
 
-// Cloudflare Workers fetch handler.
+// Cloudflare Workers fetch handler. (Node is also supported; see below.)
 //
 // Note this handles both batch and WebSocket-oriented RPCs.
 export default {
@@ -49,6 +49,8 @@ export default {
   }
 }
 ```
+
+(If you are using Node, [see this test fixture](__tests__/test-server.ts) for exmaple code. Unfortunately, it's a bit more involved as Node handles normal HTTP and WebSocket via entirely separate paths.)
 
 On the client, use it in a batch request:
 
@@ -95,15 +97,17 @@ The following types can be passed over RPC (in arguments or return values), and 
 * Primitive values: strings, numbers, booleans, null, undefined
 * Plain objects (e.g., from object literals)
 * Arrays
+* `bigint`
 * `Date`
+* `Uint8Array`
 * `Error` and its well-known subclasses
 
-The following types are not supported as of this writing, but will be supported soon:
+The following types are not supported as of this writing, but may be added in the future:
 * `Map` and `Set`
-* `ArrayBuffer` and typed arrays
+* `ArrayBuffer` and typed arrays other than `Uint8Array`
 * `RegExp`
-* `BigInt`
-* `Headers`
+* `ReadableStream` and `WritableStream`, with automatic flow control.
+* `Headers`, `Request`, and `Response`
 
 The following are intentionally NOT supported:
 * Application-defined classes that do not extend `RpcTarget`.

@@ -48,6 +48,9 @@ export default defineConfig({
                         path: "./dist/index.js",
                       },
                     ],
+                    durableObjects: {
+                      TEST_DO: "TestDo"
+                    }
                   }
                 ]
               },

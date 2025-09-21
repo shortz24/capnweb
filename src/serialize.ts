@@ -40,6 +40,22 @@ const ERROR_TYPES: Record<string, any> = {
   // TODO: DOMError? Others?
 };
 
+// Polyfill type for UInt8Array.toBase64(), which has started landing in JS runtimes but is not
+// supported everywhere just yet.
+interface Uint8Array {
+  toBase64?(options?: {
+    alphabet?: "base64" | "base64url",
+    omitPadding?: boolean
+  }): string;
+};
+
+interface FromBase64 {
+  fromBase64?(text: string, options?: {
+    alphabet?: "base64" | "base64url",
+    lastChunkHandling?: "loose" | "strict" | "stop-before-partial"
+  }): Uint8Array;
+}
+
 // Converts fully-hydrated messages into object trees that are JSON-serializable for sending over
 // the wire. This is used to implement serialization -- but it doesn't take the last step of
 // actually converting to a string. (The name is meant to be the opposite of "Evaluator", which
@@ -83,8 +99,15 @@ export class Devaluator {
 
     let kind = typeForRpc(value);
     switch (kind) {
-      case "unsupported":
-        throw new TypeError("cannot serialize: " + value);
+      case "unsupported": {
+        let msg;
+        try {
+          msg = `Cannot serialize value: ${value}`;
+        } catch (err) {
+          msg = "Cannot serialize value: (couldn't stringify value)";
+        }
+        throw new TypeError(msg);
+      }
 
       case "primitive":
         // Supported directly by JSON.
@@ -110,8 +133,21 @@ export class Devaluator {
         return [result];
       }
 
+      case "bigint":
+        return ["bigint", (<bigint>value).toString()];
+
       case "date":
         return ["date", (<Date>value).getTime()];
+
+      case "bytes": {
+        let bytes = value as Uint8Array;
+        if (bytes.toBase64) {
+          return ["bytes", bytes.toBase64({omitPadding: true})];
+        } else {
+          return ["bytes",
+              btoa(String.fromCharCode.apply(null, bytes as number[]).replace(/=*$/, ""))];
+        }
+      }
 
       case "error": {
         let e = <Error>value;
@@ -261,11 +297,33 @@ export class Evaluator {
         }
         return result;
       } else switch (value[0]) {
+        case "bigint":
+          if (typeof value[1] == "string") {
+            return BigInt(value[1]);
+          }
+          break;
         case "date":
           if (typeof value[1] == "number") {
             return new Date(value[1]);
           }
           break;
+        case "bytes": {
+          let b64 = Uint8Array as FromBase64;
+          if (typeof value[1] == "string") {
+            if (b64.fromBase64) {
+              return b64.fromBase64(value[1]);
+            } else {
+              let bs = atob(value[1]);
+              let len = bs.length;
+              let bytes = new Uint8Array(len);
+              for (let i = 0; i < len; i++) {
+                bytes[i] = bs.charCodeAt(i);
+              }
+              return bytes;
+            }
+          }
+          break;
+        }
         case "error":
           if (value.length >= 3 && typeof value[1] === "string" && typeof value[2] === "string") {
             let cls = ERROR_TYPES[value[1]] || Error;
@@ -439,7 +497,22 @@ export class Evaluator {
     } else if (value instanceof Object) {
       let result = <Record<string, unknown>>value;
       for (let key in result) {
-        result[key] = this.evaluateImpl(result[key], result, key);
+        if (key in Object.prototype || key === "toJSON") {
+          // Out of an abundance of caution, we will ignore properties that override properties
+          // of Object.prototype. It's especially important that we don't allow `__proto__` as it
+          // may lead to prototype pollution. We also would rather not allow, e.g., `toString()`,
+          // as overriding this could lead to various mischief.
+          //
+          // We also block `toJSON()` for similar reasons -- even though Object.prototype doesn't
+          // actually define it, `JSON.stringify()` treats it specially and we don't want someone
+          // snooping on JSON calls.
+          //
+          // We do still evaluate the inner value so that we can properly release any stubs.
+          this.evaluateImpl(result[key], result, key);
+          delete result[key];
+        } else {
+          result[key] = this.evaluateImpl(result[key], result, key);
+        }
       }
       return result;
     } else {

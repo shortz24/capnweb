@@ -1,5 +1,6 @@
 import { RpcStub } from "./core.js";
 import { RpcTransport, RpcSession, RpcSessionOptions } from "./rpc.js";
+import type { IncomingMessage, ServerResponse, OutgoingHttpHeader, OutgoingHttpHeaders } from "node:http";
 
 type SendBatchFunc = (batch: string[]) => Promise<string[]>;
 
@@ -146,4 +147,36 @@ export async function newHttpBatchRpcResponse(
   // TODO: Ask RpcSession to dispose everything it is still holding on to?
 
   return new Response(transport.getResponseBody());
+}
+
+export async function nodeHttpBatchRpcResponse(
+    request: IncomingMessage, response: ServerResponse,
+    localMain: any,
+    options?: RpcSessionOptions & {
+      headers?: OutgoingHttpHeaders | OutgoingHttpHeader[],
+    }): Promise<void> {
+  if (request.method !== "POST") {
+    response.writeHead(405, "This endpoint only accepts POST requests.");
+  }
+
+  let body = await new Promise<string>((resolve, reject) => {
+    let chunks: Buffer[] = [];
+    request.on("data", chunk => {
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      resolve(Buffer.concat(chunks).toString());
+    });
+    request.on("error", reject);
+  });
+  let batch = body === "" ? [] : body.split("\n");
+
+  let transport = new BatchServerTransport(batch);
+  let rpc = new RpcSession(transport, localMain, options);
+
+  await transport.whenAllReceived();
+  await rpc.drain();
+
+  response.writeHead(200, options?.headers);
+  response.end(transport.getResponseBody());
 }
