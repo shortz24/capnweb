@@ -1289,34 +1289,14 @@ function followPath(value: unknown, parent: object | undefined,
   };
 }
 
-// StubHook wrapping an RpcPayload in local memory.
-//
-// This is used for:
-// - Resolution of a promise.
-//   - Initially on the server side, where it can be pull()ed and used in pipelining.
-//   - On the client side, after pull() has transmitted the payload.
-// - Implementing RpcTargets, on the server side.
-//   - Since the payload's root is an RpcTarget, pull()ing it will just duplicate the stub.
-export class PayloadStubHook extends StubHook {
-  constructor(payload: RpcPayload) {
-    super();
-    this.payload = payload;
-  }
-
-  private payload?: RpcPayload;  // cleared when disposed
-
-  private getPayload(): RpcPayload {
-    if (this.payload) {
-      return this.payload;
-    } else {
-      throw new Error("Attempted to use an RPC StubHook after it was disposed.");
-    }
-  }
+// Shared base class for PayloadStubHook and TargetStubHook.
+abstract class ValueStubHook extends StubHook {
+  protected abstract getValue(): {value: unknown, owner: RpcPayload | null};
 
   call(path: PropertyPath, args: RpcPayload): StubHook {
     try {
-      let payload = this.getPayload();
-      let followResult = followPath(payload.value, undefined, path, payload);
+      let {value, owner} = this.getValue();
+      let followResult = followPath(value, undefined, path, owner);
 
       if (followResult.hook) {
         return followResult.hook.call(followResult.remainingPath, args);
@@ -1339,8 +1319,8 @@ export class PayloadStubHook extends StubHook {
     try {
       let followResult: FollowPathResult;
       try {
-        let payload = this.getPayload();
-        followResult = followPath(payload.value, undefined, path, payload);
+        let {value, owner} = this.getValue();
+        followResult = followPath(value, undefined, path, owner);;
       } catch (err) {
         // Oops, we need to dispose the captures of which we took ownership.
         for (let cap of captures) {
@@ -1362,18 +1342,66 @@ export class PayloadStubHook extends StubHook {
 
   get(path: PropertyPath): StubHook {
     try {
-      let payload = this.getPayload();
-      let followResult = followPath(payload.value, undefined, path, payload);
+      let {value, owner} = this.getValue();
+
+      if (path.length === 0 && owner === null) {
+        // The only way this happens is if someone sends "pipeline" and references a
+        // TargetStubHook, but they shouldn't do that, because TargetStubHook never backs a
+        // promise, and a non-promise cannot be converted to a promise.
+        // TODO: Is this still correct for rpc-thenable?
+        throw new Error("Can't dup an RpcTarget stub as a promise.");
+      }
+
+      let followResult = followPath(value, undefined, path, owner);
 
       if (followResult.hook) {
         return followResult.hook.get(followResult.remainingPath);
       }
 
+      // Note that if `followResult.owner` is null, then we've descended into the contents of an
+      // RpcTarget. In that case, if this deep copy discovers an RpcTarget embedded in the result,
+      // it will create a new stub for it. If that RpcTarget has a disposer, it'll be disposed when
+      // that stub is disposed. If the same RpcTarget is returned in *another* get(), it create
+      // *another* stub, which calls the disposer *another* time. This can be quite weird -- the
+      // disposer may be called any number of times, including zero if the property is never read
+      // at all. Unfortunately, that's just the way it is. The application can avoid this problem by
+      // wrapping the RpcTarget in an RpcStub itself, proactively, and using that as the property --
+      // then, each time the property is get()ed, a dup() of that stub is returned.
       return new PayloadStubHook(RpcPayload.deepCopyFrom(
           followResult.value, followResult.parent, followResult.owner));
     } catch (err) {
       return new ErrorStubHook(err);
     }
+  }
+}
+
+// StubHook wrapping an RpcPayload in local memory.
+//
+// This is used for:
+// - Resolution of a promise.
+//   - Initially on the server side, where it can be pull()ed and used in pipelining.
+//   - On the client side, after pull() has transmitted the payload.
+// - Implementing RpcTargets, on the server side.
+//   - Since the payload's root is an RpcTarget, pull()ing it will just duplicate the stub.
+export class PayloadStubHook extends ValueStubHook {
+  constructor(payload: RpcPayload) {
+    super();
+    this.payload = payload;
+  }
+
+  private payload?: RpcPayload;  // cleared when disposed
+
+  private getPayload(): RpcPayload {
+    if (this.payload) {
+      return this.payload;
+    } else {
+      throw new Error("Attempted to use an RPC StubHook after it was disposed.");
+    }
+  }
+
+  protected getValue() {
+    let payload = this.getPayload();
+    return {value: payload.value, owner: payload};
   }
 
   dup(): StubHook {
@@ -1448,7 +1476,7 @@ type BoxedRefcount = { count: number };
 // the root of the payload happens to be an RpcTarget), but there can only be one RpcPayload
 // pointing at an RpcTarget whereas there can be several TargetStubHooks pointing at it. Also,
 // TargetStubHook cannot be pull()ed, because it always backs an RpcStub, not an RpcPromise.
-class TargetStubHook extends StubHook {
+class TargetStubHook extends ValueStubHook {
   // Constructs a TargetStubHook that is not duplicated from an existing hook.
   //
   // If `value` is a function, `parent` is bound as its "this".
@@ -1491,82 +1519,8 @@ class TargetStubHook extends StubHook {
     }
   }
 
-  call(path: PropertyPath, args: RpcPayload): StubHook {
-    try {
-      let target = this.getTarget();
-      let followResult = followPath(target, this.parent, path, null);
-
-      if (followResult.hook) {
-        return followResult.hook.call(followResult.remainingPath, args);
-      }
-
-      // It's a local function.
-      if (typeof followResult.value != "function") {
-        throw new TypeError(`'${path.join('.')}' is not a function.`);
-      }
-      let promise = args.deliverCall(<Function>followResult.value, followResult.parent);
-      return new PromiseStubHook(promise.then(payload => {
-        return new PayloadStubHook(payload);
-      }));
-    } catch (err) {
-      return new ErrorStubHook(err);
-    }
-  }
-
-  map(path: PropertyPath, captures: StubHook[], instructions: unknown[]): StubHook {
-    try {
-      let followResult: FollowPathResult;
-      try {
-        let target = this.getTarget();
-        followResult = followPath(target, this.parent, path, null);
-      } catch (err) {
-        // Oops, we need to dispose the captures of which we took ownership.
-        for (let cap of captures) {
-          cap.dispose();
-        }
-        throw err;
-      }
-
-      if (followResult.hook) {
-        return followResult.hook.map(followResult.remainingPath, captures, instructions);
-      }
-
-      return mapImpl.applyMap(
-          followResult.value, followResult.parent, followResult.owner, captures, instructions);
-    } catch (err) {
-      return new ErrorStubHook(err);
-    }
-  }
-
-  get(path: PropertyPath): StubHook {
-    try {
-      if (path.length == 0) {
-        // The only way this happens is if someone sends "pipeline" and references a
-        // TargetStubHook, but they shouldn't do that, because TargetStubHook never backs a
-        // promise, and a non-promise cannot be converted to a promise.
-        throw new Error("Can't dup an RpcTarget stub as a promise.");
-      }
-
-      let target = this.getTarget();
-      let followResult = followPath(target, this.parent, path, null);
-
-      if (followResult.hook) {
-        return followResult.hook.get(followResult.remainingPath);
-      }
-
-      // Note that this deep copy, if it discovers an RpcTarget embedded in the result, will create
-      // a new stub for it. If the RpcTarget has a disposer, it'll be disposed when that stub is
-      // disposed. If the same RpcTarget is returned in *another* get(), it create *another* stub,
-      // which calls the disposer *another* time. This can be quite weird -- the disposer may be
-      // called any number of times, including zero if the property is never read at all.
-      // Unfortunately, that's just the way it is. The application can avoid this problem by
-      // wrapping the RpcTarget in an RpcStub itself, proactively, and using that as the property --
-      // then, each time the property is get()ed, a dup() of that stub is returned.
-      return new PayloadStubHook(RpcPayload.deepCopyFrom(
-          followResult.value, followResult.parent, followResult.owner));
-    } catch (err) {
-      return new ErrorStubHook(err);
-    }
+  protected getValue() {
+    return {value: this.getTarget(), owner: null};
   }
 
   dup(): StubHook {
