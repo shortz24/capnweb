@@ -330,6 +330,8 @@ Instead, you may choose one of two strategies:
 
 2. Use short-lived sessions. When the session ends, all stubs are implicitly disposed. In particular, when using HTTP batch request, there's generally no need to dispose stubs. When using long-lived WebSocket sessions, however, disposal may be important.
 
+Note: We might extend Cap'n Web to use `FinalizationRegistry` to automatically dispose abandoned stubs in the future, but even if we do, it should not be relied upon, due to problems discussed above.
+
 ### How to dispose
 
 Stubs integrate with JavaScript's [explicit resource management](https://v8.dev/features/explicit-resource-management), which became widely available in mid-2025 (and has been supported via transpilers and polyfills going back a few years earlier). In short:
