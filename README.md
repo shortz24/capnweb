@@ -16,6 +16,14 @@ Cap'n Web is more expressive than almost every other RPC system, because it impl
 * Supports promise pipelining. When you start an RPC, you get back a promise. Instead of awaiting it, you can immediately use the promise in dependent RPCs, thus performing a chain of calls in a single network round trip.
 * Supports capability-based security patterns.
 
+## Installation
+
+[Cap'n Web is an npm package.](https://www.npmjs.com/package/capnweb)
+
+```
+npm i capnweb
+```
+
 ## Example
 
 A client looks like this:
