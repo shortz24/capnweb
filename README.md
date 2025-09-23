@@ -328,7 +328,7 @@ Unfortunately, garbage collection does not work well when remote resources are i
 
 1. Many JavaScript runtimes only run the garbage collector when they sense "memory pressure" -- if memory is not running low, then they figure there's no need to try to reclaim any. However, the runtime has no way to know if the other side of an RPC connection is suffering memory pressure.
 
-2. Garbage collectors need to trace the full object graph in order to detect which objects are unreachable, especially when those objects contain cyclic refereces. However, the garbage collector can only see local objects; it has no ability to trace through the remote graph to discover cycles that may cross RPC connections.
+2. Garbage collectors need to trace the full object graph in order to detect which objects are unreachable, especially when those objects contain cyclic references. However, the garbage collector can only see local objects; it has no ability to trace through the remote graph to discover cycles that may cross RPC connections.
 
 Both of these problems might be solvable with sufficient work, but the problem seems exceedingly difficult. We make no attempt to solve it in this library.
 
