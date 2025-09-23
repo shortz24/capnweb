@@ -551,7 +551,7 @@ httpServer = http.createServer(async (request, response) => {
   // Accept Cap'n Web requests at `/api`.
   if (request.url === "/api") {
     try {
-      nodeHttpBatchRpcResponse(request, response, new MyApiImpl(), {
+      await nodeHttpBatchRpcResponse(request, response, new MyApiImpl(), {
         // If you are accepting WebSockets, then you might as well accept cross-origin HTTP, since
         // WebSockets always permit cross-origin request anyway. But, see security considerations
         // for further discussion.
