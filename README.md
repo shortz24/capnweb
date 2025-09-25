@@ -173,7 +173,7 @@ import { newWebSocketRpcSession } from "capnweb";
 // feature, part of the "explicit resource management" spec. Alternatively,
 // we could declare `api` with `let` or `const` and make sure to call
 // `api[Symbol.dispose]()` to dispose it and close the connection later.
-using api = newWebSocketRpcSession<PublicApi>("https://example.com/api");
+using api = newWebSocketRpcSession<PublicApi>("wss://example.com/api");
 
 // Usage is exactly the same, except we don't have to await all the promises
 // at once.
